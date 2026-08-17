@@ -169,11 +169,20 @@ def main():
     rows, meta = load(args.csv)
     data, shape = index(rows)
 
-    print("### Arm (Cortex-M33) -- microseconds per call\n")
-    print(table_per_arch(data, shape, "arm"))
-    print("\n### RISC-V (Hazard3) -- microseconds per call\n")
-    print(table_per_arch(data, shape, "riscv"))
-    print("\n### RISC-V / Arm ratio (higher = RISC-V slower)\n")
+    # Emit a table for every architecture present, so a new board shows up
+    # without touching this script.
+    LABEL = {
+        "arm":     "Arm Cortex-M33 @ 150 MHz (RP2350)",
+        "riscv":   "RISC-V Hazard3 @ 150 MHz (RP2350)",
+        "stm32g4": "Arm Cortex-M4F @ 170 MHz (STM32G474)",
+        "host":    "Host reference",
+    }
+    present = [a for a in ("arm", "stm32g4", "riscv") if any(k[0] == a for k in data)]
+    for arch in present:
+        print(f"### {LABEL.get(arch, arch)} -- microseconds per call\n")
+        print(table_per_arch(data, shape, arch))
+        print()
+    print("### RISC-V / Arm ratio (higher = RISC-V slower)\n")
     print(table_ratio(data, shape))
     print("\n### Control-loop budget: update_kinematics + rnea\n")
     print(table_control_budget(data, shape))

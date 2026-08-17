@@ -1,0 +1,53 @@
+# board=STM32G474 @ 170 MHz
+# flash=170 MHz, 4 wait states, ART prefetch+I-cache+D-cache enabled
+# probe=CMSIS-DAP, output over ARM semihosting
+# arch=Arm (Cortex-M4, ARMv7E-M + FPv4-SP + DSP)
+# clk_sys_hz=170000000
+# real_t=float32
+# compiler=15.2.1 20251203
+# repeats=5 target_us=50000 (minimum of 5 timed loops)
+arch,robot,algorithm,n_links,n_joints,nv,ns_per_call,cycles_per_call,iters
+stm32g4,simple_arm,update_kinematics,3,2,2,24676.3,4195,2048
+stm32g4,simple_arm,fk_frame,3,2,2,16370.6,2783,4096
+stm32g4,simple_arm,jacobian_world,3,2,2,4829.4,821,16384
+stm32g4,simple_arm,jacobian_local,3,2,2,7194.1,1223,8192
+stm32g4,simple_arm,rnea,3,2,2,16264.6,2765,4096
+stm32g4,simple_arm,aba,3,2,2,,,unsupported(-5)
+stm32g4,simple_arm,crba,3,2,2,36917.5,6276,2048
+stm32g4,simple_arm,gravity_comp,3,2,2,12000.0,2040,8192
+stm32g4,simple_arm,spatial_accel,3,2,2,7182.4,1221,8192
+stm32g4,simple_arm,spatial_velocity,3,2,2,1094.1,186,65536
+stm32g4,simple_arm,_heap_probe,3,2,2,9729.4,1654,8192
+stm32g4,spine,update_kinematics,4,3,9,34388.2,5846,2048
+stm32g4,spine,fk_frame,4,3,9,19411.6,3300,4096
+stm32g4,spine,jacobian_world,4,3,9,17505.9,2976,4096
+stm32g4,spine,jacobian_local,4,3,9,22864.7,3887,4096
+stm32g4,spine,rnea,4,3,9,22053.0,3749,4096
+stm32g4,spine,aba,4,3,9,96400.4,16388,1024
+stm32g4,spine,crba,4,3,9,67058.6,11400,1024
+stm32g4,spine,gravity_comp,4,3,9,16329.3,2776,4096
+stm32g4,spine,spatial_accel,4,3,9,8799.9,1496,8192
+stm32g4,spine,spatial_velocity,4,3,9,1094.1,186,65536
+stm32g4,spine,_heap_probe,4,3,9,12094.1,2056,8192
+stm32g4,xarm7,update_kinematics,10,7,7,84141.6,14304,1024
+stm32g4,xarm7,fk_frame,10,7,7,46353.0,7880,2048
+stm32g4,xarm7,jacobian_world,10,7,7,14211.7,2416,4096
+stm32g4,xarm7,jacobian_local,10,7,7,18929.4,3218,4096
+stm32g4,xarm7,rnea,10,7,7,46011.7,7822,2048
+stm32g4,xarm7,aba,10,7,7,208328.1,35416,256
+stm32g4,xarm7,crba,10,7,7,156705.1,26640,512
+stm32g4,xarm7,gravity_comp,10,7,7,32976.6,5606,2048
+stm32g4,xarm7,spatial_accel,10,7,7,18105.7,3078,4096
+stm32g4,xarm7,spatial_velocity,10,7,7,1094.1,186,65536
+stm32g4,xarm7,_heap_probe,10,7,7,23564.7,4006,4096
+stm32g4,go2,update_kinematics,31,12,18,231757.8,39399,256
+stm32g4,go2,fk_frame,31,12,18,21188.2,3602,4096
+stm32g4,go2,jacobian_world,31,12,18,26476.6,4501,2048
+stm32g4,go2,jacobian_local,31,12,18,36193.8,6153,2048
+stm32g4,go2,rnea,31,12,18,129687.5,22047,512
+stm32g4,go2,aba,31,12,18,617718.8,105012,128
+stm32g4,go2,crba,31,12,18,459453.1,78107,128
+stm32g4,go2,gravity_comp,31,12,18,91459.0,15548,1024
+stm32g4,go2,spatial_accel,31,12,18,50041.0,8507,1024
+stm32g4,go2,spatial_velocity,31,12,18,1094.1,186,65536
+stm32g4,go2,_heap_probe,31,12,18,65558.6,11145,1024

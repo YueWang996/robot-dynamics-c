@@ -382,7 +382,9 @@ static void report(void) {
            (double)g_checksum);
 }
 
-int main(void) {
+/* Entry point. On STM32 the reset handler needs to bring up clocks and
+ * semihosting first, so main() lives in that port and calls this instead. */
+int bench_run(void) {
 #ifdef BENCH_PICO
     stdio_init_all();
 
@@ -402,3 +404,7 @@ int main(void) {
     return 0;
 #endif
 }
+
+#ifndef BENCH_STM32G4
+int main(void) { return bench_run(); }
+#endif

@@ -1,7 +1,8 @@
 # RobotDynamics benchmark
 
 Measures every algorithm in the library across four robot platforms, on a host
-PC and on both CPU architectures of a Raspberry Pi Pico 2 (RP2350).
+PC, on both CPU architectures of a Raspberry Pi Pico 2 (RP2350), and on an
+STM32G474 (see [`stm32g4/`](stm32g4/)).
 
 Raw CSV: [`results/`](results/). Summary tables: the top-level
 [README](../README.md).

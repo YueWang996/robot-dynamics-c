@@ -91,8 +91,9 @@ not grow with model size. Reproduce with `tools/validate.py`.
 
 ## Performance
 
-Raspberry Pi Pico 2 (RP2350) at 150 MHz, single precision, `-O3`.
-Microseconds per call on the **Arm** Cortex-M33 cores:
+Microseconds per call, single precision, `-O3`, each part at its rated clock.
+Columns: Raspberry Pi Pico 2 (RP2350) Cortex-M33 at 150 MHz, and an STM32G474
+Cortex-M4F at 170 MHz.
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
@@ -107,6 +108,24 @@ Microseconds per call on the **Arm** Cortex-M33 cores:
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
 (`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
+
+Go2 (18 DOF, 31 links) across the three cores measured so far:
+
+| | M33 @ 150 MHz | M4F @ 170 MHz | Hazard3 @ 150 MHz |
+|---|---|---|---|
+| `update_kinematics` | 155.2 | 231.8 | 1458.8 |
+| `rnea` | 125.0 | 129.7 | 1650.3 |
+| `crba` | 234.4 | 459.5 | 2293.0 |
+| `aba` | 399.6 | 617.7 | 4239.1 |
+| torque tick | 280 µs — 3.6 kHz | 361 µs — 2.8 kHz | 3109 µs — 322 Hz |
+| operational space | 515 µs — 1.9 kHz | 821 µs — 1.2 kHz | — |
+
+The M4F needs 1.1–2.2× the M33's cycles for identical work even with flash
+stalls removed, and the gap widens on the most data-heavy algorithms — this
+library is memory-bound, so load/store throughput is what separates the two
+cores. Flash wait states cost the G474 about 17% on top of that, concentrated
+almost entirely in `update_kinematics` (~50%), which is the one routine calling
+into libm.
 
 A torque control tick — `update_kinematics` + `rnea` — and the loop rate it
 allows:

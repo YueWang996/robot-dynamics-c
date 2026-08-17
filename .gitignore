@@ -7,8 +7,9 @@ cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
 *.cmake.stamp
+# (no bare "Makefile" rule -- CMake's generated ones live in the ignored build
+#  dirs anyway, and a rule here would swallow hand-written Makefiles)
 
 # Firmware / object output
 *.elf
@@ -36,3 +37,4 @@ __pycache__/
 
 # Toolchain / venv
 venv/
+benchmark/stm32g4/STM32G474RETX_FLASH.ld

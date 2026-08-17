@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# RobotDynamics benchmark for STM32G474 (Cortex-M4F @ 170 MHz).
+#
+# Bare metal, no HAL: the only ST code used is the CMSIS device header and the
+# startup file. Results come out over ARM semihosting, so this needs no UART
+# pins and works on any G474 board with a SWD probe.
+#
+#   make CUBE=~/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.1
+#   make flash
+
+CUBE   ?= $(HOME)/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.1
+TC     ?= /Applications/ArmGNUToolchain/15.2.rel1/arm-none-eabi/bin/arm-none-eabi
+RD     := ../../RobotDynamics
+BENCH  := ..
+
+CMSIS  := $(CUBE)/Drivers/CMSIS
+DEV    := $(CMSIS)/Device/ST/STM32G4xx
+
+CPU    := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
+
+CFLAGS := $(CPU) -O3 -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
+          -ffunction-sections -fdata-sections \
+          -DSTM32G474xx -DBENCH_STM32G4=1 \
+          -DRD_USE_SINGLE_PRECISION=1 -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=24 \
+          -I$(CMSIS)/Include -I$(DEV)/Include -I$(RD) -I$(BENCH) -I.
+
+# RAM=1 links the image to run out of SRAM, matching how the RP2350 build is
+# measured (copy_to_ram). Default is the normal flash image.
+ifeq ($(ZEROWS),1)
+  CFLAGS += -DBENCH_G4_ZEROWS=1
+endif
+
+ifeq ($(RAM),1)
+  LDSCRIPT := STM32G474_RAM.ld
+  CFLAGS   += -DBENCH_G4_RAM=1
+else
+  LDSCRIPT := STM32G474RETX_FLASH.ld
+endif
+
+# rdimon = semihosting newlib. nano.specs keeps printf small enough to fit.
+LDFLAGS := $(CPU) -T$(LDSCRIPT) -Wl,--gc-sections -Wl,-Map=rd_bench.map \
+           --specs=nano.specs --specs=rdimon.specs -lc -lrdimon -lm -u _printf_float
+
+SRCS := main.c startup_glue.c \
+        $(BENCH)/bench_main.c \
+        $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+ASRC := $(DEV)/Source/Templates/gcc/startup_stm32g474xx.s
+
+all: rd_bench.elf
+
+$(LDSCRIPT):
+	cp $(CUBE)/Projects/STM32G474E-EVAL1/Templates/STM32CubeIDE/STM32G474RETX_FLASH.ld $@
+
+rd_bench.elf: $(SRCS) $(ASRC) $(LDSCRIPT)
+	$(TC)-gcc $(CFLAGS) $(SRCS) $(ASRC) $(LDFLAGS) -o $@
+	$(TC)-size $@
+
+flash: rd_bench.elf
+	openocd -f interface/cmsis-dap.cfg -f target/stm32g4x.cfg \
+	  -c "program $< verify reset" -c shutdown
+
+clean:
+	rm -f rd_bench.elf rd_bench.map $(LDSCRIPT)
+
+.PHONY: all flash clean
