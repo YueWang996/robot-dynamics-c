@@ -56,6 +56,7 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
     state->T_world           = buf + off; off += (size_t)n * 16;
     state->v                 = buf + off; off += (size_t)n * 6;
     state->S                 = buf + off; off += (size_t)n * 6;
+    state->vj                = buf + off; off += (size_t)n;
 
     state->inertia           = buf + off; off += (size_t)n * 36;
     state->accel             = buf + off; off += (size_t)n * 6;
@@ -140,6 +141,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         } else {
             memset(S_i, 0, 6*sizeof(rd_real_t));
         }
+        state->vj[node] = v_joint;
 
         /* 4. Spatial velocity, in this link's body frame */
         rd_real_t* v_i = &state->v[node*6];

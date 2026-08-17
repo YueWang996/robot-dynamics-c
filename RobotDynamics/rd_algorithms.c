@@ -66,6 +66,20 @@ static RD_INLINE void algo_congruence3(const rd_real_t R[9], const rd_real_t C[9
     }
 }
 
+/* dst[3x3 block at stride 6] += R^T * C * R, without materialising the result. */
+static RD_INLINE void algo_congruence3_accum(const rd_real_t R[9], const rd_real_t C[9],
+                                             rd_real_t* dst) {
+    rd_real_t CR[9];
+    rd_mat3_mul(C, R, CR);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            dst[i*6+j] += R[0*3+i]*CR[0*3+j]
+                        + R[1*3+i]*CR[1*3+j]
+                        + R[2*3+i]*CR[2*3+j];
+        }
+    }
+}
+
 /*
  * I_accum += X^T * I_in * X, with X = Ad(T).
  *
@@ -95,61 +109,74 @@ static void algo_transform_inertia_accumulate(const rd_real_t T[16],
                              T[2], T[6], T[10] };
     const rd_real_t p[3] = { T[12], T[13], T[14] };
 
-    rd_real_t A11[9], A12[9], A21[9], A22[9];
+    /*
+     * Only three 3x3 temporaries live at once. The obvious version -- pull
+     * A11/A12/A21/A22 out, build C12/C22, then materialise S11/S12/S22 --
+     * needs twelve, which is more than the M33's 32 single-precision registers
+     * can hold, so it spills to stack and reloads. On a core where this code is
+     * memory-bound rather than multiply-bound, that costs more than the
+     * multiplies saved.
+     */
+    rd_real_t A11[9], C[9], S12[9];
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) A11[i*3+j] = I_in[i*6 + j];
+    }
+
+    /* TL += R^T A11 R */
+    algo_congruence3_accum(R, A11, I_accum);
+
+    /* C = A11 P + A12,   then TR += R^T C R  and  BL += (that)^T */
+    algo_mat3_mul_skew(A11, p, C);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) C[i*3+j] += I_in[i*6 + 3 + j];
+    }
+    algo_congruence3(R, C, S12);
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
-            A11[i*3+j] = I_in[i*6 + j];
-            A12[i*3+j] = I_in[i*6 + 3 + j];
-            A21[i*3+j] = I_in[(i+3)*6 + j];
-            A22[i*3+j] = I_in[(i+3)*6 + 3 + j];
+            I_accum[i*6 + 3 + j] += S12[i*3+j];
+            I_accum[(i+3)*6 + j] += S12[j*3+i];        /* BL = TR^T */
         }
     }
 
-    /* C12 = A11 P + A12 */
-    rd_real_t C12[9];
-    algo_mat3_mul_skew(A11, p, C12);
-    for (int k = 0; k < 9; ++k) C12[k] += A12[k];
-
-    /* C22 = A22 + A21 P + (A21 P)^T - P A11 P */
-    rd_real_t t1[9], t2[9], t3[9], C22[9];
-    algo_mat3_mul_skew(A21, p, t1);      /* A21 P            */
-    algo_skew_mul_mat3(p, A11, t2);      /* P A11            */
-    algo_mat3_mul_skew(t2, p, t3);       /* P A11 P          */
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            C22[i*3+j] = A22[i*3+j] + t1[i*3+j] + t1[j*3+i] - t3[i*3+j];
+    /* C = A22 + A21 P + (A21 P)^T - P A11 P,  then BR += R^T C R */
+    {
+        rd_real_t t[9];
+        algo_skew_mul_mat3(p, A11, t);                 /* P A11   */
+        algo_mat3_mul_skew(t, p, C);                   /* P A11 P */
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                t[i*3+j] = I_in[(i+3)*6 + j];          /* A21     */
+            }
+        }
+        rd_real_t A21P[9];
+        algo_mat3_mul_skew(t, p, A21P);
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                C[i*3+j] = I_in[(i+3)*6 + 3 + j] + A21P[i*3+j] + A21P[j*3+i]
+                         - C[i*3+j];
+            }
         }
     }
-
-    rd_real_t S11[9], S12[9], S22[9];
-    algo_congruence3(R, A11, S11);
-    algo_congruence3(R, C12, S12);
-    algo_congruence3(R, C22, S22);
-
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            I_accum[i*6 + j]         += S11[i*3+j];
-            I_accum[i*6 + 3 + j]     += S12[i*3+j];
-            I_accum[(i+3)*6 + j]     += S12[j*3+i];   /* BL = TR^T */
-            I_accum[(i+3)*6 + 3 + j] += S22[i*3+j];
-        }
-    }
+    algo_congruence3_accum(R, C, I_accum + 3*6 + 3);
 }
 
-/* Velocity of a link relative to its parent: v_i - Ad(Ti) v_parent. */
+/*
+ * Velocity of a link relative to its parent, i.e. S * qd.
+ *
+ * This is v_i - Ad(Ti) v_parent, but rd_update_kinematics() already formed it
+ * on the way to v_i, so the joint velocity it used is cached rather than the
+ * transform being run a second time. RNEA, ABA and rd_spatial_acceleration()
+ * each want this once per link.
+ */
 static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
                                           const rd_state_t* state,
                                           rd_idx_t node, rd_idx_t parent,
                                           rd_real_t out[6]) {
-    const rd_real_t* v_i = &state->v[node*6];
-    if (parent == -1) {
-        memset(out, 0, 6*sizeof(rd_real_t));
-        return;
-    }
-    (void)chain;
-    rd_real_t v_p[6];
-    rd_spatial_transform_motion(&state->Ti[node*16], &state->v[parent*6], v_p);
-    for (int k = 0; k < 6; ++k) out[k] = v_i[k] - v_p[k];
+    (void)chain; (void)parent;
+    const rd_real_t* S_i = &state->S[node*6];
+    const rd_real_t vj = state->vj[node];
+    for (int k = 0; k < 6; ++k) out[k] = S_i[k] * vj;
 }
 
 /* Gravity as a spatial motion vector in world coordinates: [-g; 0]. */
@@ -451,14 +478,14 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
     for (rd_int_t ti = n-1; ti >= 0; --ti) {
         rd_idx_t node = chain->topo_order[ti];
         rd_real_t* f_i = &f[node*6];
-        const rd_real_t* I_i = &chain->spatial_inertias[node*36];
+        const rd_real_t* I_i = &chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN];
 
         rd_real_t Ia[6];
-        rd_mat6_vec(I_i, &a[node*6], Ia);
+        rd_spatial_inertia_mul(I_i, &a[node*6], Ia);
 
         if (use_velocity) {
             rd_real_t Iv[6], bias[6];
-            rd_mat6_vec(I_i, &state->v[node*6], Iv);
+            rd_spatial_inertia_mul(I_i, &state->v[node*6], Iv);
             rd_spatial_cross_force(&state->v[node*6], Iv, bias);
             for (int k = 0; k < 6; ++k) f_i[k] = Ia[k] + bias[k];
         } else {
@@ -631,7 +658,8 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         rd_spatial_cross_motion(v_i, vj, &c[node*6]);
 
         rd_real_t Iv[6];
-        rd_mat6_vec(&chain->spatial_inertias[node*36], v_i, Iv);
+        rd_spatial_inertia_mul(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
+                               v_i, Iv);
         rd_spatial_cross_force(v_i, Iv, &pA[node*6]);
     }
 
@@ -642,22 +670,24 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         const rd_real_t* S_i = &state->S[node*6];
         rd_int_t vi = algo_vel_index(chain, node);
 
-        rd_real_t Ia[36];
-        memcpy(Ia, &IA[node*36], 36*sizeof(rd_real_t));
-
-        rd_real_t pa[6];
-        memcpy(pa, &pA[node*6], 6*sizeof(rd_real_t));
+        /*
+         * The rank-1 downdate happens in place: IA[node] is dead once this
+         * link's contribution has been pushed to its parent, so copying it
+         * aside first would just be 36 floats of pointless traffic.
+         */
+        rd_real_t* Ia = &IA[node*36];
+        rd_real_t* pa = &pA[node*6];
 
         if (vi >= 0) {
-            rd_mat6_vec(&IA[node*36], S_i, &U[node*6]);
+            rd_mat6_vec(Ia, S_i, &U[node*6]);
             rd_real_t d = RD_REAL(0.0);
             for (int k = 0; k < 6; ++k) d += S_i[k] * U[node*6 + k];
             if (d <= RD_EPS) return RD_ERR_SINGULAR;
             D[node] = d;
             u[node] = (tau ? tau[vi] : RD_REAL(0.0));
-            for (int k = 0; k < 6; ++k) u[node] -= S_i[k] * pA[node*6 + k];
+            for (int k = 0; k < 6; ++k) u[node] -= S_i[k] * pa[k];
 
-            /* Ia = IA - U D^-1 U^T */
+            /* Ia -= U D^-1 U^T */
             rd_real_t inv_d = RD_REAL(1.0) / d;
             for (int r = 0; r < 6; ++r) {
                 rd_real_t ur = U[node*6 + r] * inv_d;
@@ -665,7 +695,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
                     Ia[r*6 + cc] -= ur * U[node*6 + cc];
                 }
             }
-            /* pa = pA + Ia c + U D^-1 u */
+            /* pa += Ia c + U D^-1 u */
             rd_real_t Iac[6];
             rd_mat6_vec(Ia, &c[node*6], Iac);
             rd_real_t ud = u[node] * inv_d;
@@ -673,7 +703,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         } else {
             D[node] = RD_REAL(0.0);
             u[node] = RD_REAL(0.0);
-            /* A rigid connection: c is zero, so pa is just pA. */
+            /* A rigid connection: c is zero, so pa is unchanged. */
             rd_real_t Iac[6];
             rd_mat6_vec(Ia, &c[node*6], Iac);
             for (int k = 0; k < 6; ++k) pa[k] += Iac[k];
@@ -684,11 +714,9 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             rd_real_t pf[6];
             rd_spatial_transform_force(&state->T_parent_to_child[node*16], pa, pf);
             for (int k = 0; k < 6; ++k) pA[parent*6 + k] += pf[k];
-        } else {
-            /* Keep the fully articulated quantities for the base solve. */
-            memcpy(&IA[node*36], Ia, 36*sizeof(rd_real_t));
-            memcpy(&pA[node*6], pa, 6*sizeof(rd_real_t));
         }
+        /* For the root, Ia and pa already alias IA[node]/pA[node], which is
+         * exactly what the base solve in pass 3 reads. */
     }
 
     /* --- Pass 3 (outward): accelerations ----------------------------------- */

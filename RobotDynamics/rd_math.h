@@ -247,6 +247,43 @@ static RD_INLINE void rd_mat6_add(const rd_real_t* A, const rd_real_t* B, rd_rea
     for (int i = 0; i < 36; ++i) C[i] = A[i] + B[i];
 }
 
+/* ============================================================================
+ * Compact spatial inertia
+ *
+ * A rigid body's spatial inertia is determined by ten numbers, not thirty-six:
+ *
+ *   I = [[ m*1,    -m[c]x ]      packed as { m, cx,cy,cz, Jxx,Jyy,Jzz,Jxy,Jxz,Jyz }
+ *        [ m[c]x,   J     ]]     with J = Ic - m[c]x[c]x
+ *
+ * Multiplying by it in that form costs 27 multiplies and ten loads instead of
+ * 36 and 36. On an in-order core running this code out of SRAM the load count
+ * is what dominates, so this is the cheaper operation by a wide margin.
+ * ============================================================================ */
+
+#define RD_INERTIA_COMPACT_LEN 10
+
+/* out = I * v, with v and out ordered [linear, angular]. */
+static RD_INLINE void rd_spatial_inertia_mul(const rd_real_t* RD_RESTRICT ic,
+                                             const rd_real_t* RD_RESTRICT v,
+                                             rd_real_t* RD_RESTRICT out) {
+    const rd_real_t m  = ic[0];
+    const rd_real_t cx = ic[1], cy = ic[2], cz = ic[3];
+    const rd_real_t vx = v[0], vy = v[1], vz = v[2];
+    const rd_real_t wx = v[3], wy = v[4], wz = v[5];
+
+    /* linear = m * (v - c x w) */
+    out[0] = m * (vx - (cy*wz - cz*wy));
+    out[1] = m * (vy - (cz*wx - cx*wz));
+    out[2] = m * (vz - (cx*wy - cy*wx));
+
+    /* angular = m * (c x v) + J w */
+    const rd_real_t Jxx = ic[4], Jyy = ic[5], Jzz = ic[6];
+    const rd_real_t Jxy = ic[7], Jxz = ic[8], Jyz = ic[9];
+    out[3] = m * (cy*vz - cz*vy) + Jxx*wx + Jxy*wy + Jxz*wz;
+    out[4] = m * (cz*vx - cx*vz) + Jxy*wx + Jyy*wy + Jyz*wz;
+    out[5] = m * (cx*vy - cy*vx) + Jxz*wx + Jyz*wy + Jzz*wz;
+}
+
 static RD_INLINE void rd_mat6_transpose(const rd_real_t* RD_RESTRICT A, 
                                         rd_real_t* RD_RESTRICT At) {
     for (int r = 0; r < 6; ++r) {

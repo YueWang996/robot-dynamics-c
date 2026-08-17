@@ -55,6 +55,10 @@ typedef struct {
 
     /* Spatial inertias (6x6, row-major) */
     rd_real_t* spatial_inertias;   /**< Size n_nodes * 36 */
+
+    /* Same inertias in the ten-number packed form, for I*v products.
+     * See rd_spatial_inertia_mul(). Size n_nodes * RD_INERTIA_COMPACT_LEN. */
+    rd_real_t* inertia_compact;
     
 } rd_chain_t;
 

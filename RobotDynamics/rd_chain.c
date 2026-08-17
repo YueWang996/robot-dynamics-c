@@ -46,6 +46,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
     chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
     chain->spatial_inertias = (rd_real_t*)RD_CALLOC(n * 36, sizeof(rd_real_t));
+    chain->inertia_compact = (rd_real_t*)RD_CALLOC(n * RD_INERTIA_COMPACT_LEN,
+                                                   sizeof(rd_real_t));
 
     for (rd_int_t i = 0; i < n; ++i) {
         chain->frame_names[i] = (char*)RD_MALLOC(16);
@@ -56,7 +58,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         !chain->children_list || !chain->joint_idx || !chain->joint_type ||
         !chain->axes || !chain->T_joint_offset || !chain->T_link_offset ||
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
-        !chain->spatial_inertias) {
+        !chain->spatial_inertias || !chain->inertia_compact) {
         rd_chain_free(chain);
         return RD_ERR_ALLOC_FAILED;
     }
@@ -200,6 +202,17 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
                 Is[(r+3)*6 + (c+3)] = Ic[r*3 + c] - m * cx_sq[r*3 + c];
             }
         }
+
+        /* Packed form: m, c, and the six unique entries of J. */
+        rd_real_t* icp = &chain->inertia_compact[i * RD_INERTIA_COMPACT_LEN];
+        icp[0] = m;
+        icp[1] = cx; icp[2] = cy; icp[3] = cz;
+        icp[4] = Is[3*6 + 3];   /* Jxx */
+        icp[5] = Is[4*6 + 4];   /* Jyy */
+        icp[6] = Is[5*6 + 5];   /* Jzz */
+        icp[7] = Is[3*6 + 4];   /* Jxy */
+        icp[8] = Is[3*6 + 5];   /* Jxz */
+        icp[9] = Is[4*6 + 5];   /* Jyz */
     }
 
     /* Build topological order (simple BFS from roots) */
@@ -261,6 +274,7 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->parent_path);
     RD_FREE(chain->parent_path_len);
     RD_FREE(chain->spatial_inertias);
+    RD_FREE(chain->inertia_compact);
     
     /* Zero out the struct */
     memset(chain, 0, sizeof(rd_chain_t));

@@ -54,8 +54,8 @@ that reads from it.
 
 The state buffer is caller-provided, so you decide where it lives, and it holds
 every algorithm's scratch too — so nothing in the control loop allocates. On a
-Go2, priming the cache costs 154 µs and each algorithm that follows costs
-between 9 µs and 487 µs.
+Go2, priming the cache costs 155 µs and each algorithm that follows costs
+between 9 µs and 400 µs.
 
 ## Algorithms
 
@@ -96,14 +96,14 @@ Microseconds per call on the **Arm** Cortex-M33 cores:
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
-| `update_kinematics` | 16.13 | 23.06 | 54.93 | 153.53 |
-| `fk_frame` | 9.65 | 13.19 | 29.44 | 14.65 |
-| `jacobian_world` | 3.04 | 8.31 | 7.92 | 9.23 |
-| `rnea` | 17.37 | 23.41 | 57.17 | 172.05 |
-| `aba` | n/a | 69.85 | 163.76 | 487.21 |
-| `crba` | 20.21 | 33.45 | 98.79 | 246.69 |
-| `gravity` | 11.43 | 15.22 | 36.32 | 107.23 |
-| `spatial_velocity` | 1.06 | 1.07 | 1.07 | 1.06 |
+| `update_kinematics` | 16.18 | 23.17 | 55.48 | 155.17 |
+| `fk_frame` | 9.71 | 13.08 | 29.18 | 14.81 |
+| `jacobian_world` | 3.05 | 8.37 | 7.89 | 9.27 |
+| `rnea` | 13.25 | 17.80 | 42.35 | 125.03 |
+| `aba` | n/a | 59.03 | 136.77 | 399.64 |
+| `crba` | 19.32 | 31.90 | 94.55 | 234.43 |
+| `gravity` | 9.43 | 12.59 | 29.67 | 86.77 |
+| `spatial_velocity` | 1.06 | 1.05 | 1.05 | 1.06 |
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
 (`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
@@ -113,24 +113,27 @@ allows:
 
 | Robot | dof | Arm core | RISC-V core |
 |---|---|---|---|
-| `spine` | 9 | 47 µs — 21.5 kHz | 497 µs — 2.0 kHz |
-| `xarm7` | 7 | 112 µs — 8.9 kHz | 1205 µs — 830 Hz |
-| `go2` | 18 | 326 µs — 3.1 kHz | 3500 µs — 286 Hz |
+| `spine` | 9 | 41 µs — 24.4 kHz | 450 µs — 2.2 kHz |
+| `xarm7` | 7 | 98 µs — 10.2 kHz | 1085 µs — 922 Hz |
+| `go2` | 18 | 280 µs — 3.6 kHz | 3109 µs — 322 Hz |
 
-Adding CRBA for operational-space control: Go2 572 µs (1.7 kHz). A
-forward-dynamics tick (`update_kinematics` + `rd_aba`): Go2 641 µs (1.6 kHz).
+Adding CRBA for operational-space control: Go2 515 µs (1.9 kHz). A
+forward-dynamics tick (`update_kinematics` + `rd_aba`): Go2 555 µs (1.8 kHz).
 
 **Run dynamics on the Arm cores.** The RP2350's RISC-V cores have no FPU, so
 every float operation is emulated in software and the library runs 4–13x
-slower there (median 9.7x). An integer-only control measurement in the same benchmark puts
+slower there (median 9.8x). An integer-only control measurement in the same benchmark puts
 RISC-V slightly *ahead* of Arm, which pins the difference entirely on floating
 point rather than on the core.
 
-Two structural rewrites in v0.3.0 — exploiting the block structure of the
-spatial-inertia congruence, and specialising the SE(3) compose and
-coordinate-axis rotation — took CRBA down 2.05x, ABA 1.53x and
-`update_kinematics` 1.46x on Go2, with Pinocchio agreement unchanged at machine
-precision. A Go2 operational-space tick went from 1.1 kHz to 1.7 kHz.
+Four rounds of structural optimisation across v0.3.0 and v0.4.0 took CRBA down
+2.16x, ABA 1.87x, RNEA 1.37x and `update_kinematics` 1.44x on Go2, with
+Pinocchio agreement unchanged at machine precision throughout. A Go2
+operational-space tick went from 1.1 kHz to 1.9 kHz.
+
+The instructive part: the code turned out to be **memory-bound, not
+multiply-bound**. Two rounds of reducing multiply counts left RNEA at exactly
+1.00x; one round of reducing *loads* moved it 27%.
 
 Full methodology, per-architecture tables, a host reference, the optimisation
 history and what is still on the table are in
