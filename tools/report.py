@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 report.py -- turn captured benchmark CSVs into the Markdown tables used by
 docs/PROFILING.md.

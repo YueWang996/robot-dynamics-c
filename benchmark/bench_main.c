@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file bench_main.c
  * @brief RobotDynamics micro-benchmark suite.
@@ -53,20 +54,20 @@
 
 static rd_chain_t g_chain;
 static rd_state_t g_state;
-static rd_real_t  g_state_buf[BENCH_MAX_NODES * 66 + 16];
+static rd_real_t  g_state_buf[RD_STATE_BUF_FLOATS(BENCH_MAX_NODES)];
 
 static rd_real_t  g_q_base[7];
-static rd_real_t  g_qd_base[6];
-static rd_real_t  g_qdd_base[6];
 static rd_int_t   g_has_fb;
-static rd_real_t  g_q[BENCH_MAX_NV];
-static rd_real_t  g_qd[BENCH_MAX_NV];
-static rd_real_t  g_qdd[BENCH_MAX_NV];
+static rd_real_t  g_q[BENCH_MAX_NV];    /* nj  */
+static rd_real_t  g_qd[BENCH_MAX_NV];   /* nv, packed */
+static rd_real_t  g_qdd[BENCH_MAX_NV];  /* nv, packed */
+static rd_real_t  g_tau_in[BENCH_MAX_NV];
 
 static rd_real_t  g_T[16];
 static rd_real_t  g_J[6 * BENCH_MAX_NV];
 static rd_real_t  g_M[BENCH_MAX_NV * BENCH_MAX_NV];
 static rd_real_t  g_tau[BENCH_MAX_NV];
+static rd_real_t  g_qdd_out[BENCH_MAX_NV];
 static rd_real_t  g_acc[6];
 static rd_real_t  g_vel[6];
 
@@ -87,7 +88,7 @@ static rd_real_t next_real(rd_real_t lo, rd_real_t hi) {
     return lo + u * (hi - lo);
 }
 
-static void make_configuration(rd_int_t nj) {
+static void make_configuration(rd_int_t nj, rd_int_t nv, rd_int_t base_dof) {
     g_rng = 0x12345678u;   /* reset so every robot sees a reproducible draw */
 
     /* Floating base: position + unit quaternion */
@@ -103,17 +104,16 @@ static void make_configuration(rd_int_t nj) {
         g_q_base[3] = w / n; g_q_base[4] = x / n;
         g_q_base[5] = y / n; g_q_base[6] = z / n;
     }
-    for (int i = 0; i < 6; ++i) {
-        g_qd_base[i]  = next_real(RD_REAL(-0.5), RD_REAL(0.5));
-        g_qdd_base[i] = next_real(RD_REAL(-0.5), RD_REAL(0.5));
-    }
-
+    /* Deliberately away from 0 so no sin/cos fast path is taken */
     for (rd_int_t i = 0; i < nj; ++i) {
-        /* Deliberately away from 0 so no sin/cos fast path is taken */
-        g_q[i]   = next_real(RD_REAL(-1.0), RD_REAL(1.0));
-        g_qd[i]  = next_real(RD_REAL(-1.0), RD_REAL(1.0));
-        g_qdd[i] = next_real(RD_REAL(-1.0), RD_REAL(1.0));
+        g_q[i] = next_real(RD_REAL(-1.0), RD_REAL(1.0));
     }
+    for (rd_int_t i = 0; i < nv; ++i) {
+        g_qd[i]     = next_real(RD_REAL(-1.0), RD_REAL(1.0));
+        g_qdd[i]    = next_real(RD_REAL(-1.0), RD_REAL(1.0));
+        g_tau_in[i] = next_real(RD_REAL(-1.0), RD_REAL(1.0));
+    }
+    (void)base_dof;
 }
 
 /* ========================================================================== */
@@ -166,10 +166,7 @@ static double measure(bench_fn_t fn, const rd_chain_t* chain,
 
 static void case_update_kinematics(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_update_kinematics_fb(c, (rd_state_t*)s,
-                            g_has_fb ? g_q_base : NULL,
-                            g_has_fb ? g_qd_base : NULL,
-                            g_q, g_qd);
+    rd_update_kinematics(c, (rd_state_t*)s, g_has_fb ? g_q_base : NULL, g_q, g_qd);
     g_checksum += s->T_world[0];
 }
 
@@ -180,41 +177,46 @@ static void case_fk_frame(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef
 }
 
 static void case_jacobian(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_jacobian_cached(c, s, eef, RD_FRAME_WORLD, g_J);
+    rd_jacobian(c, s, eef, RD_FRAME_WORLD, g_J);
     g_checksum += g_J[0];
 }
 
 static void case_jacobian_local(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_jacobian_cached(c, s, eef, RD_FRAME_LOCAL, g_J);
+    rd_jacobian(c, s, eef, RD_FRAME_LOCAL, g_J);
     g_checksum += g_J[0];
 }
 
 static void case_rnea(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_rnea_cached(c, s, g_has_fb ? g_qdd_base : NULL, g_qdd, NULL, g_tau);
+    rd_rnea(c, s, g_qdd, NULL, g_tau);
     g_checksum += g_tau[0];
+}
+
+static void case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    (void)eef;
+    rd_aba(c, s, g_tau_in, NULL, g_qdd_out);
+    g_checksum += g_qdd_out[0];
 }
 
 static void case_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_crba_cached(c, s, g_M);
+    rd_crba(c, s, g_M);
     g_checksum += g_M[0];
 }
 
 static void case_gravity(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_gravity_compensation(c, s, NULL, g_tau);
+    rd_gravity(c, s, NULL, g_tau);
     g_checksum += g_tau[0];
 }
 
 static void case_spatial_accel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_spatial_acceleration_cached(c, s, g_has_fb ? g_qdd_base : NULL, g_qdd,
-                                   eef, RD_FRAME_WORLD, g_acc);
+    rd_spatial_acceleration(c, s, g_qdd, eef, RD_FRAME_WORLD, g_acc);
     g_checksum += g_acc[0];
 }
 
 static void case_spatial_vel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_get_spatial_velocity_cached(c, s, eef, RD_FRAME_WORLD, g_vel);
+    rd_spatial_velocity(c, s, eef, RD_FRAME_WORLD, g_vel);
     g_checksum += g_vel[0];
 }
 
@@ -223,21 +225,20 @@ static void case_spatial_vel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t 
  * single call. Timing it separately lets the report attribute how much of each
  * algorithm's cost is allocator overhead rather than arithmetic.
  */
-static void case_alloc_rnea(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+/*
+ * Integer-only control. The library no longer allocates anywhere, so this is
+ * not measuring the library -- it exists purely as an architecture comparison
+ * that touches no floating point, which isolates how much of the Arm/RISC-V gap
+ * is the missing FPU rather than the core itself.
+ */
+static void case_alloc_probe(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)s; (void)eef;
     rd_int_t n = c->n_nodes;
     void* a = RD_CALLOC(n * 6, sizeof(rd_real_t));
     void* f = RD_CALLOC(n * 6, sizeof(rd_real_t));
-    g_checksum += (rd_real_t)(a != NULL) + (rd_real_t)(f != NULL);
-    RD_FREE(a); RD_FREE(f);
-}
-
-static void case_alloc_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    (void)s; (void)eef;
-    rd_int_t n = c->n_nodes;
     void* ic = RD_MALLOC((size_t)n * 36 * sizeof(rd_real_t));
-    g_checksum += (rd_real_t)(ic != NULL);
-    RD_FREE(ic);
+    g_checksum += (rd_real_t)(a != NULL) + (rd_real_t)(f != NULL) + (rd_real_t)(ic != NULL);
+    RD_FREE(a); RD_FREE(f); RD_FREE(ic);
 }
 
 static const bench_case_t g_cases[] = {
@@ -245,13 +246,13 @@ static const bench_case_t g_cases[] = {
     { "fk_frame",           case_fk_frame,          1, "standalone, walks root->frame path" },
     { "jacobian_world",     case_jacobian,          1, "cached" },
     { "jacobian_local",     case_jacobian_local,    1, "cached, adds a 6xnv reference-frame change" },
-    { "rnea",               case_rnea,              1, "cached, inverse dynamics" },
+    { "rnea",               case_rnea,              1, "inverse dynamics" },
+    { "aba",                case_aba,               1, "forward dynamics" },
     { "crba",               case_crba,              1, "cached, joint-space mass matrix" },
     { "gravity_comp",       case_gravity,           1, "cached, RNEA with qdd=0" },
     { "spatial_accel",      case_spatial_accel,     1, "cached, re-runs the forward pass" },
     { "spatial_velocity",   case_spatial_vel,       1, "cached, O(1) lookup + transform" },
-    { "_heap_rnea",         case_alloc_rnea,        1, "PROBE: allocator traffic inside rnea" },
-    { "_heap_crba",         case_alloc_crba,        1, "PROBE: allocator traffic inside crba" },
+    { "_heap_probe",        case_alloc_probe,       1, "PROBE: integer-only control, no float at all" },
 };
 
 #define N_CASES ((int)(sizeof(g_cases) / sizeof(g_cases[0])))
@@ -304,7 +305,7 @@ static void run_robot(const bench_robot_t* robot) {
     }
 
     g_has_fb = g_chain.has_floating_base;
-    make_configuration(nj);
+    make_configuration(nj, nv, g_has_fb ? 6 : 0);
 
     /* Query frame for FK/Jacobian/spatial rows: the deepest node in the tree.
      * Picked by path length rather than by index, so that reordering the model
@@ -317,10 +318,8 @@ static void run_robot(const bench_robot_t* robot) {
     }
 
     /* Prime the cache exactly the way a control loop would. */
-    rd_update_kinematics_fb(&g_chain, &g_state,
-                            g_has_fb ? g_q_base : NULL,
-                            g_has_fb ? g_qd_base : NULL,
-                            g_q, g_qd);
+    rd_update_kinematics(&g_chain, &g_state,
+                         g_has_fb ? g_q_base : NULL, g_q, g_qd);
 
     for (int i = 0; i < N_CASES; ++i) {
         uint32_t iters = 0;

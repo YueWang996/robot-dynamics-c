@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 test_urdf2c.py -- tests for the URDF -> rd_model_t converter.
 

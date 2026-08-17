@@ -25,13 +25,16 @@ Twenty random configurations per robot, seeded for reproducibility. Error is
 
 | Quantity | spine (9 dof, floating) | xarm7 (7 dof, fixed) | go2 (18 dof, floating) |
 |---|---|---|---|
-| Link world poses | 7.8e-16 | 1.7e-15 | 6.7e-16 |
-| Link spatial velocities | 7.8e-16 | 3.0e-15 | 8.7e-16 |
-| RNEA torques | 5.1e-16 | 1.9e-15 | 7.0e-16 |
-| CRBA mass matrix | 3.7e-16 | 8.9e-16 | 2.8e-17 |
-| Jacobian (world) | 7.8e-16 | 1.7e-15 | 5.6e-16 |
-| Jacobian (local) | 5.6e-16 | 1.8e-15 | 5.6e-16 |
-| Spatial acceleration | 9.5e-16 | 3.4e-15 | 5.7e-16 |
+| Link world poses | 7.8e-16 | 1.7e-15 | 4.4e-16 |
+| Link spatial velocities | 8.6e-16 | 3.9e-15 | 6.2e-16 |
+| RNEA torques | 9.0e-16 | 4.7e-15 | 4.9e-16 |
+| **ABA accelerations** | **3.0e-15** | **2.4e-16** | **5.6e-16** |
+| Gravity torques g(q) | 7.4e-16 | 3.1e-15 | 4.7e-16 |
+| Nonlinear terms | 6.8e-16 | 3.4e-15 | 4.3e-16 |
+| CRBA mass matrix | 3.7e-16 | 7.2e-16 | 2.2e-16 |
+| Jacobian (world) | 4.4e-16 | 1.4e-15 | 3.3e-16 |
+| Jacobian (local) | 1.1e-15 | 1.7e-15 | 1.3e-15 |
+| Spatial acceleration | 5.9e-16 | 5.5e-15 | 6.2e-16 |
 
 Machine precision throughout. The algorithms agree with Pinocchio exactly.
 
@@ -42,16 +45,23 @@ Machine precision throughout. The algorithms agree with Pinocchio exactly.
 | Link world poses | 1.8e-07 | 2.1e-07 | 1.9e-07 |
 | Link spatial velocities | 3.0e-07 | 2.8e-07 | 2.7e-07 |
 | RNEA torques | 3.8e-07 | 6.0e-07 | 2.6e-07 |
+| **ABA accelerations** | **1.9e-06** | **1.3e-07** | **1.9e-07** |
 | CRBA mass matrix | 1.4e-07 | 1.3e-07 | 6.2e-08 |
 | Jacobian (world) | 1.8e-07 | 2.1e-07 | 1.4e-07 |
 | Jacobian (local) | 3.1e-07 | 2.8e-07 | 2.8e-07 |
 | Spatial acceleration | 2.4e-07 | 3.9e-07 | 3.4e-07 |
 
-`float32` epsilon is 1.19e-07, so the worst case across every quantity and every
-robot is about five ULP. Crucially the error does **not** grow with model size —
-Go2, with 31 links and the longest recursions, is no worse than the 4-link
-spine. Nothing is being amplified through the tree traversal, which is the thing
-that would actually threaten a single-precision implementation.
+ABA on `spine` is the one entry noticeably above the others. That is not error
+growth through the recursion -- it is the 6x6 Cholesky solve for the free base,
+which is the only place the library inverts anything, on the smallest and
+therefore worst-conditioned base inertia of the three.
+
+`float32` epsilon is 1.19e-07, so every recursive algorithm lands within a few
+ULP and the one matrix solve within about sixteen. Crucially the error does
+**not** grow with model size — Go2, with 31 links and the longest recursions, is
+no worse than the 4-link spine. Nothing is being amplified through the tree
+traversal, which is the thing that would actually threaten a single-precision
+implementation.
 
 `simple_arm` is skipped: its URDF declares revolute joints with no `<limit>`
 element, which urdfdom rejects outright. bard's own parser is more permissive.
@@ -83,7 +93,7 @@ Pinocchio `q` straight in produces a plausible-looking but wrong pose.
 
 ## What this caught
 
-The cross-check paid for itself immediately. Three of these were real defects,
+The cross-check paid for itself immediately. Four of these were real defects,
 one was a defect in the test itself.
 
 ### CRBA transformed composite inertia the wrong way
@@ -140,6 +150,33 @@ configured type, so a `double` build rounded every transcendental through
 1e-7 instead of 1e-16, and the single-precision analysis would have had no
 baseline to be measured against.
 
+### ABA folded the velocity-product term in the wrong place
+
+The first ABA implementation computed each joint acceleration from the parent
+acceleration and then added the velocity-product term `c` afterwards:
+
+```c
+qdd = (u - U . a_parent) / D;
+a   = a_parent + S*qdd + c;        /* c added too late */
+```
+
+Expanding `tau = S^T (I^A a + p^A)` with `a = a' + c + S qdd` gives
+
+```
+tau = U^T a' + D qdd + U^T c + S^T p^A   =>   qdd = (u - U^T (a' + c)) / D
+```
+
+so `c` has to be inside the bracket, before the division. The base acceleration
+came out exactly right regardless -- it is solved from the articulated inertia
+rather than from this formula -- which made the bug look like a floating-base
+problem when it was a joint-pass problem. Joint accelerations were wrong by
+100-800%.
+
+Worth noting what caught it: `rnea(aba(tau)) == tau` still held to 3e-2, close
+enough to look like rounding. What actually pinned it was comparing against
+`M^-1 (tau - nle)` built from the already-validated CRBA and RNEA, which
+isolated the error to the joint rows.
+
 ### A too-strict tolerance in the converter's own test
 
 `test_total_mass_matches_pinocchio` summed `model.inertias[1:]`, skipping index
@@ -151,9 +188,9 @@ there. The converter was right; the test was wrong.
 
 ## Coverage and limits
 
-What is checked: link world poses, link spatial velocities, RNEA torques, the
-CRBA mass matrix, geometric Jacobians in both reference frames, and frame
-spatial acceleration — on one fixed-base serial arm, one floating-base serial
+What is checked: link world poses, link spatial velocities, RNEA torques, ABA
+accelerations, gravity torques, nonlinear terms, the CRBA mass matrix,
+geometric Jacobians in both reference frames, and frame spatial acceleration — on one fixed-base serial arm, one floating-base serial
 chain, and one floating-base branched tree, at random configurations with
 non-zero velocity and acceleration.
 

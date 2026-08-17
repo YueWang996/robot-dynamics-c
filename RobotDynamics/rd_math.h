@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file rd_math.h
  * @brief Robot Dynamics Math Utilities

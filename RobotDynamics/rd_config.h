@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file rd_config.h
  * @brief Robot Dynamics Library Configuration

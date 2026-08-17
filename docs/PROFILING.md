@@ -10,6 +10,16 @@ here agrees with Pinocchio to machine precision.
 
 ---
 
+> **Measurement status.** The RP2350 tables below were captured against v0.1.0.
+> They predate v0.2.0's API rework, which moved all algorithm scratch into
+> `rd_state_t` (removing the per-call `malloc` these tables measure) and added
+> `rd_aba`. They therefore have no `aba` row, and the RNEA/CRBA figures still
+> include allocator traffic that the current code does not perform. The host
+> column has been refreshed; the two board columns need the Pico reconnected to
+> re-measure.
+
+---
+
 ## Summary
 
 1. **The Arm cores are 4–14x faster than the RISC-V cores** on this workload
@@ -95,8 +105,8 @@ non-identity base pose and a non-zero base twist, and their RNEA and spatial
 acceleration calls receive a non-zero base acceleration. These are the costs of
 the real floating-base path, not of a base pinned at the origin.
 
-`aba` (forward dynamics) is in bard but **not implemented in this library**, so
-it has no row here.
+`aba` (forward dynamics) has been implemented since these numbers were taken and
+will appear as its own row after the re-measurement.
 
 ---
 
@@ -310,30 +320,12 @@ algorithms are not pathologically slow.
 Properties of the library as it currently stands, surfaced by building,
 measuring and validating it.
 
-### `rd_gravity_compensation()` does not return gravity terms
+### `RD_USE_STATIC_ALLOC=1` is still unsupported
 
-```c
-rd_status_t rd_gravity_compensation(...) { return rd_rnea_cached(chain, state, NULL, NULL, gravity, tau_g); }
-rd_status_t rd_nonlinear_terms(...)      { return rd_rnea_cached(chain, state, NULL, NULL, gravity, tau_nle); }
-```
-
-The two are character-for-character the same call. Because the cached
-`rd_state_t` already has `q̇` baked into `state->v`, both return the full
-nonlinear term `C(q,q̇)q̇ + g(q)`, not `g(q)`. To get gravity alone you must
-re-run `rd_update_kinematics` with `qd = 0`. The measured `gravity_comp` row is
-therefore the same work as `rnea`, which is exactly what the numbers show
-(167.27 vs 170.27 µs on Go2).
-
-### `RD_USE_STATIC_ALLOC=1` breaks RNEA and CRBA
-
-Under that flag `RD_MALLOC`/`RD_CALLOC` expand to `NULL`. `rd_rnea_cached` and
-`rd_crba_cached` allocate scratch on every call, so both immediately return
-`RD_ERR_ALLOC_FAILED`. The library's advertised no-malloc mode does not
-currently work for its two main dynamics entry points.
-
-Fixing this and removing the per-call allocation are the same change: move the
-scratch buffers into `rd_state_t`, where the rest of the per-tick workspace
-already lives.
+Under that flag `RD_MALLOC`/`RD_CALLOC` expand to `NULL`. As of v0.2.0 no
+algorithm allocates, but `rd_chain_build()` still does, once, at startup, so it
+returns `RD_ERR_ALLOC_FAILED`. The control loop is allocation-free either way;
+what remains is giving `rd_chain_build` a caller-provided arena too.
 
 ### Topological ordering relies on an undocumented invariant
 
@@ -346,13 +338,20 @@ error. `tools/urdf2c.py` guarantees the invariant and
 `tools/test_urdf2c.py::test_parent_precedes_child` asserts it; a hand-written
 model could still violate it.
 
-### Fixed during this work
+### Fixed along the way
 
 * **CRBA transformed composite inertia in the wrong direction** — mass matrix
   was 13–40% wrong. See [VALIDATION.md](VALIDATION.md).
+* **ABA folded the velocity-product term in after the joint solve** instead of
+  before it, making every joint acceleration wrong while leaving the base
+  correct.
 * **`rd_update_kinematics` ignored the floating base**, forcing the root to the
-  identity pose with zero velocity. Now `rd_update_kinematics_fb` takes
-  `q_base`/`qd_base`, and RNEA no longer double-rotates gravity.
+  identity pose with zero velocity, and RNEA double-rotated gravity.
+* **`rd_gravity_compensation()` returned `C(q,q̇)q̇ + g(q)`.** Replaced by
+  `rd_gravity()`, which runs the RNEA recursion with the cached velocities
+  suppressed and so needs no second kinematics pass.
+* **RNEA and CRBA allocated scratch on every call.** All scratch now lives in
+  `rd_state_t`.
 * **`tools/urdf2c.py` emitted joints breadth-first**, which scrambled `q`
   against Pinocchio and bard on branched robots.
 * **`RD_USE_SINGLE_PRECISION=0` did not give double precision** — `rd_math.h`
@@ -365,17 +364,16 @@ model could still violate it.
 
 ## Ranked optimisation opportunities
 
-1. **Move RNEA/CRBA scratch into `rd_state_t`.** Removes 5.6–22.2% from RNEA,
-   makes the control loop allocation-free, and fixes `RD_USE_STATIC_ALLOC`.
-   Small, contained change with the best cost-to-benefit ratio here.
+1. ~~Move RNEA/CRBA scratch into `rd_state_t`.~~ **Done in v0.2.0** — this was
+   worth 5.6–22.2% of RNEA and made the control loop allocation-free.
 
 2. **Exploit structure in the CRBA inertia transform.** `XᵀIX` with a symmetric
    `I` and a block-structured adjoint needs roughly a quarter of the dense-6x6
    arithmetic currently spent. CRBA is the most expensive algorithm, so this is
    the largest absolute win.
 
-3. **Don't propagate each CRBA column to the root twice.** The floating-base and
-   joint coupling loops duplicate the same parent-chain walk.
+3. ~~Don't propagate each CRBA column to the root twice.~~ **Done in v0.2.0** —
+   the two parent-chain walks are now one.
 
 4. **Cache `sincos` per joint in `rd_state_t`.** `update_kinematics` is the
    largest single line item and calls `sinf`/`cosf` once per joint;

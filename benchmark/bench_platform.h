@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file bench_platform.h
  * @brief Thin platform layer for the RobotDynamics benchmark.

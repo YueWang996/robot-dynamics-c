@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file model_go2.h
  * @brief `go2` robot model, generated from /private/tmp/claude-501/-Users-justin-CLionProjects-RobotDynamics/0d738cf5-7cc7-46b0-a3f2-f43595f1a54f/scratchpad/bard/examples/example_robots/go2_description/urdf/go2.urdf

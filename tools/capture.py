@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 capture.py -- flash a benchmark UF2 to an RP2350 and scrape its CSV report.
 

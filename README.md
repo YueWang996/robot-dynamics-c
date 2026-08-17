@@ -16,26 +16,27 @@ workstation can run against this library on the robot.
 rd_chain_t chain;
 rd_chain_build(&my_model, &chain);
 
-static rd_real_t buf[RD_MAX_LINKS * 66 + 16];
+static rd_real_t buf[RD_STATE_BUF_FLOATS(RD_MAX_LINKS)];
 rd_state_t state;
 rd_state_init(&state, chain.n_nodes, buf, sizeof(buf));
 
 for (;;) {
-    read_encoders(q, qd);
-    read_base_estimate(q_base, qd_base);          /* floating base only */
+    read_encoders(q_joints, qd);
+    read_base_estimate(q_base);      /* NULL for a fixed-base robot */
 
     /* One traversal; everything below reads its cache. */
-    rd_update_kinematics_fb(&chain, &state, q_base, qd_base, q, qd);
+    rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
 
-    rd_rnea_cached(&chain, &state, qdd_base, qdd, NULL, tau);
-    rd_jacobian_cached(&chain, &state, eef, RD_FRAME_WORLD, J);
+    rd_rnea(&chain, &state, qdd, NULL, tau);              /* inverse dynamics */
+    rd_jacobian(&chain, &state, eef, RD_FRAME_WORLD, J);
 
     write_torques(tau);
 }
 ```
 
-Fixed-base robots call `rd_update_kinematics(&chain, &state, q, qd)` and pass
-`NULL` for the base acceleration.
+Nothing in that loop allocates. `qd`, `qdd` and `tau` are packed to length `nv`,
+with the base in the first six elements for a floating base — the same layout
+Pinocchio and bard use, so the vectors are interchangeable with them.
 
 ## Why it is shaped this way
 
@@ -59,14 +60,15 @@ that follows costs between 9 µs and 517 µs.
 
 | | RobotDynamics | bard |
 |---|:---:|:---:|
-| Forward kinematics | `rd_fk_frame` | `forward_kinematics` |
-| Shared kinematics cache | `rd_update_kinematics_fb` | `update_kinematics` |
-| Geometric Jacobian | `rd_jacobian_cached` | `jacobian` |
-| Inverse dynamics (RNEA) | `rd_rnea_cached` | `rnea` |
-| Mass matrix (CRBA) | `rd_crba_cached` | `crba` |
-| Spatial acceleration | `rd_spatial_acceleration_cached` | `spatial_acceleration` |
-| Spatial velocity | `rd_get_spatial_velocity_cached` | — |
-| Forward dynamics (ABA) | not implemented | `aba` |
+| Shared kinematics cache | `rd_update_kinematics` | `update_kinematics` |
+| Forward kinematics | `rd_forward_kinematics`, `rd_fk_frame` | `forward_kinematics` |
+| Geometric Jacobian | `rd_jacobian` | `jacobian` |
+| Inverse dynamics (RNEA) | `rd_rnea` | `rnea` |
+| Forward dynamics (ABA) | `rd_aba` | `aba` |
+| Mass matrix (CRBA) | `rd_crba` | `crba` |
+| Spatial acceleration | `rd_spatial_acceleration` | `spatial_acceleration` |
+| Spatial velocity | `rd_spatial_velocity` | — |
+| Gravity / Coriolis terms | `rd_gravity`, `rd_nonlinear_terms`, `rd_coriolis` | — |
 | Batching / autodiff / GPU | not applicable | yes |
 
 Both world-frame and body-frame references are supported wherever a reference
@@ -78,8 +80,8 @@ random configurations, in both precisions:
 
 | Build | Worst relative error vs Pinocchio |
 |---|---|
-| `float64` | 3.4e-15 |
-| `float32` | 6.0e-07 (about five ULP; float32 eps is 1.19e-07) |
+| `float64` | 5.5e-15 |
+| `float32` | 1.9e-06 (float32 eps is 1.19e-07) |
 
 Across a fixed-base arm, a floating-base serial chain and a floating-base
 branched quadruped. The error does not grow with model size. Details, the
@@ -164,14 +166,9 @@ benchmark platforms are in [`benchmark/models/`](benchmark/models/).
 
 This is pre-1.0 and there are known gaps. Being explicit about them:
 
-- **`rd_gravity_compensation()` returns `C(q,q̇)q̇ + g(q)`, not `g(q)`.** It is
-  currently the same call as `rd_nonlinear_terms()`. Getting gravity alone
-  requires re-running `rd_update_kinematics` with `qd = 0`.
-- **`RD_STATIC_ALLOC=ON` breaks RNEA and CRBA.** Both allocate scratch on every
-  call, so under that flag they return `RD_ERR_ALLOC_FAILED`. This is also why
-  the control loop is not yet allocation-free — the fix for both is to move the
-  scratch into `rd_state_t`.
-- **No forward dynamics.** ABA is in bard but not here.
+- **`RD_STATIC_ALLOC=ON` is still unsupported**, though for a narrower reason
+  than before: the algorithms no longer allocate, but `rd_chain_build()` does,
+  once, at startup. The control loop itself is allocation-free either way.
 - **Prismatic joints are unvalidated.** The code path exists, but all four
   benchmark robots are revolute-only, so no numerical reference covers it.
 - **Joint limits, damping and friction are parsed and stored but never used**

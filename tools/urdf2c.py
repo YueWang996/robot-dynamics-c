@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 urdf2c.py -- Convert a URDF into a RobotDynamics `rd_model_t` C header.
 
@@ -215,6 +216,7 @@ def emit(model_name, links, order, floating_base, src_path):
 
     out = []
     w = out.append
+    w("/* SPDX-License-Identifier: Apache-2.0 */")
     w("/**")
     w(f" * @file model_{model_name}.h")
     w(f" * @brief `{model_name}` robot model, generated from {src_path}")

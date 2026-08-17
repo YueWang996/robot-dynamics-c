@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """
 validate.py -- cross-check RobotDynamics against Pinocchio.
 
@@ -72,7 +73,7 @@ def run_dump(binary, robot, payload):
             out[tag][int(f[1])] = np.array([float(x) for x in f[2:]])
         elif tag == "NAME":
             out["NAME"][int(f[1])] = f[2]
-        elif tag in ("TAU", "ACC"):
+        elif tag in ("TAU", "ACC", "QDD", "G", "NLE"):
             out[tag] = np.array([float(x) for x in f[1:]])
         elif tag == "SHAPE":
             out["shape"] = tuple(int(x) for x in f[1:])
@@ -84,17 +85,18 @@ def run_dump(binary, robot, payload):
 
 
 def make_config(rng, nj, floating):
+    """Velocity-space vectors are packed to nv, base first, matching the C API."""
+    nv = nj + (6 if floating else 0)
     cfg = {}
     if floating:
         cfg["p"] = rng.uniform(-0.4, 0.4, 3)
         quat = rng.normal(size=4)
         quat /= np.linalg.norm(quat)
         cfg["quat_wxyz"] = quat                      # w x y z
-        cfg["v_base"] = rng.uniform(-1.0, 1.0, 6)    # body frame, [lin, ang]
-        cfg["a_base"] = rng.uniform(-1.0, 1.0, 6)
     cfg["q"] = rng.uniform(-1.2, 1.2, nj)
-    cfg["qd"] = rng.uniform(-1.5, 1.5, nj)
-    cfg["qdd"] = rng.uniform(-2.0, 2.0, nj)
+    cfg["qd"] = rng.uniform(-1.5, 1.5, nv)
+    cfg["qdd"] = rng.uniform(-2.0, 2.0, nv)
+    cfg["tau"] = rng.uniform(-3.0, 3.0, nv)
     return cfg
 
 
@@ -102,9 +104,7 @@ def payload_for(cfg, floating):
     parts = []
     if floating:
         parts += [*cfg["p"], *cfg["quat_wxyz"]]
-        parts += [*cfg["v_base"]]
-        parts += [*cfg["a_base"]]
-    parts += [*cfg["q"], *cfg["qd"], *cfg["qdd"]]
+    parts += [*cfg["q"], *cfg["qd"], *cfg["qdd"], *cfg["tau"]]
     return " ".join(repr(float(x)) for x in parts) + "\n"
 
 
@@ -113,10 +113,9 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name):
     if floating:
         w, x, y, z = cfg["quat_wxyz"]
         q = np.concatenate([cfg["p"], [x, y, z, w], cfg["q"]])   # scalar-last
-        v = np.concatenate([cfg["v_base"], cfg["qd"]])
-        a = np.concatenate([cfg["a_base"], cfg["qdd"]])
     else:
-        q, v, a = cfg["q"].copy(), cfg["qd"].copy(), cfg["qdd"].copy()
+        q = cfg["q"].copy()
+    v, a, tau_in = cfg["qd"].copy(), cfg["qdd"].copy(), cfg["tau"].copy()
 
     pin.forwardKinematics(model, data, q, v, a)
     pin.updateFramePlacements(model, data)
@@ -139,7 +138,13 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name):
     JL = pin.computeFrameJacobian(model, data, q, fid, pin.ReferenceFrame.LOCAL)
 
     acc = pin.getFrameAcceleration(model, data, fid, pin.ReferenceFrame.WORLD).vector
-    return dict(T=T, V=V, tau=tau, M=M, JW=JW, JL=JL, acc=acc, nv=model.nv)
+
+    qdd_fd = pin.aba(model, data, q, v, tau_in)
+    g = pin.computeGeneralizedGravity(model, data, q)
+    nle = pin.nonLinearEffects(model, data, q, v)
+
+    return dict(T=T, V=V, tau=tau, M=M, JW=JW, JL=JL, acc=acc,
+                qdd=qdd_fd, g=g, nle=nle, nv=model.nv)
 
 
 def err(a, b):
@@ -195,7 +200,8 @@ def main():
             grand_fail += 1
             continue
 
-        worst = {k: 0.0 for k in ("T", "V", "tau", "M", "JW", "JL", "acc")}
+        worst = {k: 0.0 for k in ("T", "V", "tau", "qdd", "g", "nle",
+                                  "M", "JW", "JL", "acc")}
         missing_frames = 0
 
         for s in range(args.samples):
@@ -213,6 +219,9 @@ def main():
                 worst["V"] = max(worst["V"], err(d["V"][i], ref["V"][name]))
 
             worst["tau"] = max(worst["tau"], err(d["TAU"], ref["tau"]))
+            worst["qdd"] = max(worst["qdd"], err(d["QDD"], ref["qdd"]))
+            worst["g"]   = max(worst["g"],   err(d["G"],   ref["g"]))
+            worst["nle"] = max(worst["nle"], err(d["NLE"], ref["nle"]))
             Mc = np.array([d["M"][r] for r in range(nv)])
             worst["M"] = max(worst["M"], err(Mc, ref["M"]))
             JWc = np.array([d["JW"][r] for r in range(6)])
@@ -224,7 +233,7 @@ def main():
         print(f"{robot}  (C: {n} links / {nj} joints / nv {nv}"
               f"{', floating' if fb else ''}   "
               f"pinocchio: {model.njoints - 1} joints / nv {model.nv})")
-        for k in ("T", "V", "tau", "M", "JW", "JL", "acc"):
+        for k in ("T", "V", "tau", "qdd", "g", "nle", "M", "JW", "JL", "acc"):
             status = "ok  " if worst[k] <= tol else "FAIL"
             if worst[k] > tol:
                 grand_fail += 1

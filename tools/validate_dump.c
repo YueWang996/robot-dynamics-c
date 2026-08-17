@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file validate_dump.c
  * @brief Dumps RobotDynamics results for one configuration, for cross-checking
@@ -7,11 +8,8 @@
  *
  * Config on stdin, whitespace separated:
  *   q_base[7]   x y z qw qx qy qz     (floating-base models only)
- *   qd_base[6]  v w                   (root body frame)
- *   qdd_base[6] a alpha               (root body frame)
- *   q[nj] qd[nj] qdd[nj]
- *
- * Fixed-base models omit the three base blocks.
+ *   q_joints[nj]
+ *   qd[nv] qdd[nv] tau[nv]            (packed; base first for a floating base)
  *
  * Output is line oriented: a tag, then values, at full precision.
  * See tools/validate.py, which drives this and compares against Pinocchio.
@@ -29,14 +27,15 @@
 #include "model_go2.h"
 
 #define MAXNV 32
+#define MAXN  40
 
 static rd_chain_t chain;
 static rd_state_t state;
-static rd_real_t  state_buf[40 * 66 + 16];
+static rd_real_t  state_buf[RD_STATE_BUF_FLOATS(MAXN)];
 
-static rd_real_t q_base[7], qd_base[6], qdd_base[6];
-static rd_real_t q[MAXNV], qd[MAXNV], qdd[MAXNV];
-static rd_real_t M[MAXNV * MAXNV], J[6 * MAXNV], tau[MAXNV];
+static rd_real_t q_base[7], q_joints[MAXNV];
+static rd_real_t qd[MAXNV], qdd[MAXNV], tau_in[MAXNV];
+static rd_real_t M[MAXNV * MAXNV], J[6 * MAXNV], tau[MAXNV], qdd_fd[MAXNV];
 
 static void rd(rd_real_t* dst, int n) {
     for (int i = 0; i < n; ++i) {
@@ -65,55 +64,69 @@ int main(int argc, char** argv) {
 
     memset(&chain, 0, sizeof(chain));
     if (rd_chain_build(model, &chain) != RD_OK) { fprintf(stderr, "build failed\n"); return 1; }
-    rd_state_init(&state, chain.n_nodes, state_buf, sizeof(state_buf));
+    if (rd_state_init(&state, chain.n_nodes, state_buf, sizeof(state_buf)) != RD_OK) {
+        fprintf(stderr, "state init failed\n"); return 1;
+    }
 
     const int n  = chain.n_nodes;
     const int nj = chain.n_joints;
     const int nv = rd_chain_get_nv(&chain);
     const int fb = chain.has_floating_base;
 
-    if (fb) { rd(q_base, 7); rd(qd_base, 6); rd(qdd_base, 6); }
-    rd(q, nj); rd(qd, nj); rd(qdd, nj);
+    if (fb) rd(q_base, 7);
+    rd(q_joints, nj);
+    rd(qd, nv); rd(qdd, nv); rd(tau_in, nv);
 
     printf("REAL_BYTES %d\n", (int)sizeof(rd_real_t));
     printf("SHAPE %d %d %d %d\n", n, nj, nv, fb);
     for (int i = 0; i < n; ++i) printf("NAME %d %s\n", i, chain.frame_names[i]);
 
-    rd_update_kinematics_fb(&chain, &state,
-                            fb ? q_base : NULL,
-                            fb ? qd_base : NULL,
-                            q, qd);
+    rd_update_kinematics(&chain, &state, fb ? q_base : NULL, q_joints, qd);
 
-    /* World pose of every link frame, column-major 4x4 as the library stores it */
-    for (int i = 0; i < n; ++i) emit("T", i, &state.T_world[i * 16], 16);
+    for (int i = 0; i < n; ++i) {
+        rd_real_t T[16];
+        rd_forward_kinematics(&chain, &state, (rd_idx_t)i, T);
+        emit("T", i, T, 16);
+    }
 
-    /* Spatial velocity of every link, in world coordinates */
     for (int i = 0; i < n; ++i) {
         rd_real_t v[6];
-        rd_get_spatial_velocity_cached(&chain, &state, (rd_idx_t)i, RD_FRAME_WORLD, v);
+        rd_spatial_velocity(&chain, &state, (rd_idx_t)i, RD_FRAME_WORLD, v);
         emit("V", i, v, 6);
     }
 
-    rd_rnea_cached(&chain, &state, fb ? qdd_base : NULL, qdd, NULL, tau);
+    rd_rnea(&chain, &state, qdd, NULL, tau);
     emit("TAU", -1, tau, nv);
 
-    rd_crba_cached(&chain, &state, M);
+    if (rd_aba(&chain, &state, tau_in, NULL, qdd_fd) != RD_OK) {
+        fprintf(stderr, "aba failed\n"); return 1;
+    }
+    emit("QDD", -1, qdd_fd, nv);
+
+    rd_gravity(&chain, &state, NULL, tau);
+    emit("G", -1, tau, nv);
+
+    rd_nonlinear_terms(&chain, &state, NULL, tau);
+    emit("NLE", -1, tau, nv);
+
+    rd_crba(&chain, &state, M);
     for (int r = 0; r < nv; ++r) emit("M", r, &M[r * nv], nv);
 
-    /* Jacobian of the deepest frame, both reference frames */
-    const rd_idx_t eef = (rd_idx_t)(n - 1);
+    /* Deepest frame in the tree */
+    rd_idx_t eef = 0;
+    for (rd_int_t i = 1; i < n; ++i) {
+        if (chain.parent_path_len[i] > chain.parent_path_len[eef]) eef = (rd_idx_t)i;
+    }
     printf("EEF %d\n", eef);
 
-    rd_jacobian_cached(&chain, &state, eef, RD_FRAME_WORLD, J);
+    rd_jacobian(&chain, &state, eef, RD_FRAME_WORLD, J);
     for (int r = 0; r < 6; ++r) emit("JW", r, &J[r * nv], nv);
 
-    rd_jacobian_cached(&chain, &state, eef, RD_FRAME_LOCAL, J);
+    rd_jacobian(&chain, &state, eef, RD_FRAME_LOCAL, J);
     for (int r = 0; r < 6; ++r) emit("JL", r, &J[r * nv], nv);
 
-    /* Spatial acceleration of that frame, world coordinates */
     rd_real_t acc[6];
-    rd_spatial_acceleration_cached(&chain, &state, fb ? qdd_base : NULL, qdd,
-                                   eef, RD_FRAME_WORLD, acc);
+    rd_spatial_acceleration(&chain, &state, qdd, eef, RD_FRAME_WORLD, acc);
     emit("ACC", -1, acc, 6);
 
     rd_chain_free(&chain);
