@@ -1,0 +1,277 @@
+/**
+ * @file rd_chain.c
+ * @brief Kinematic Chain Implementation
+ */
+
+#include "rd_chain.h"
+#include "rd_math.h"
+#include <string.h>
+
+/* Convert axis enum to vector */
+static void axis_to_vec(rd_axis_t a, rd_real_t v[3]) {
+    v[0] = v[1] = v[2] = RD_REAL(0.0);
+    switch (a) {
+        case RD_AXIS_X:     v[0] =  RD_REAL(1.0); break;
+        case RD_AXIS_Y:     v[1] =  RD_REAL(1.0); break;
+        case RD_AXIS_Z:     v[2] =  RD_REAL(1.0); break;
+        case RD_AXIS_NEG_X: v[0] = -RD_REAL(1.0); break;
+        case RD_AXIS_NEG_Y: v[1] = -RD_REAL(1.0); break;
+        case RD_AXIS_NEG_Z: v[2] = -RD_REAL(1.0); break;
+        default: break;
+    }
+}
+
+rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
+    if (!model || !chain) return RD_ERR_NULL_PTR;
+    
+    rd_int_t n = (rd_int_t)model->num_links;
+    rd_int_t nj = (rd_int_t)model->num_joints;
+    
+    chain->n_nodes = n;
+    chain->n_joints = nj;
+    chain->has_floating_base = (rd_int_t)model->use_floating_base;
+
+    /* Allocate arrays */
+    chain->parent_list = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->topo_order = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->children_count = (rd_int_t*)RD_CALLOC(n, sizeof(rd_int_t));
+    chain->children_list = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
+    chain->joint_idx = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->joint_type = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
+    chain->axes = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * nj * 3);
+    chain->T_joint_offset = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * n * 16);
+    chain->T_link_offset = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * n * 16);
+    chain->frame_names = (char**)RD_MALLOC(sizeof(char*) * n);
+    chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
+    chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
+    chain->spatial_inertias = (rd_real_t*)RD_CALLOC(n * 36, sizeof(rd_real_t));
+
+    for (rd_int_t i = 0; i < n; ++i) {
+        chain->frame_names[i] = (char*)RD_MALLOC(16);
+    }
+
+    /* Check allocations */
+    if (!chain->parent_list || !chain->topo_order || !chain->children_count ||
+        !chain->children_list || !chain->joint_idx || !chain->joint_type ||
+        !chain->axes || !chain->T_joint_offset || !chain->T_link_offset ||
+        !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
+        !chain->spatial_inertias) {
+        rd_chain_free(chain);
+        return RD_ERR_ALLOC_FAILED;
+    }
+
+    /* Fill parent list, names, and joint data */
+    rd_int_t joint_counter = 0;
+    for (rd_int_t i = 0; i < n; ++i) {
+        const rd_link_t* L = &model->links[i];
+        chain->parent_list[i] = L->parent_idx;
+        strncpy(chain->frame_names[i], L->name, 15);
+        chain->frame_names[i][15] = '\0';
+        chain->joint_type[i] = (rd_int_t)L->joint.type;
+        
+        if (L->joint.type == RD_JOINT_REVOLUTE || L->joint.type == RD_JOINT_PRISMATIC) {
+            chain->joint_idx[i] = (rd_idx_t)joint_counter;
+            rd_real_t v[3];
+            axis_to_vec(L->joint.axis, v);
+            chain->axes[joint_counter*3 + 0] = v[0];
+            chain->axes[joint_counter*3 + 1] = v[1];
+            chain->axes[joint_counter*3 + 2] = v[2];
+            joint_counter++;
+        } else {
+            chain->joint_idx[i] = -1;
+        }
+        
+        /* Build joint offset transform */
+        rd_real_t R[9];
+        rd_rot_rpy((rd_real_t)L->rpy_parent.x, 
+                   (rd_real_t)L->rpy_parent.y, 
+                   (rd_real_t)L->rpy_parent.z, R);
+        rd_real_t t[3] = {
+            (rd_real_t)L->pos_parent.x,
+            (rd_real_t)L->pos_parent.y,
+            (rd_real_t)L->pos_parent.z
+        };
+        rd_rot_to_mat4(R, t, &chain->T_joint_offset[i*16]);
+        
+        /* Link offset is identity */
+        rd_mat4_identity(&chain->T_link_offset[i*16]);
+    }
+
+    /* Build children lists */
+    for (rd_int_t i = 0; i < n; ++i) {
+        rd_idx_t p = chain->parent_list[i];
+        if (p >= 0 && p < n) {
+            rd_int_t idx = chain->children_count[p];
+            chain->children_list[p*n + idx] = (rd_idx_t)i;
+            chain->children_count[p]++;
+        }
+    }
+    
+    chain->max_children = 0;
+    for (rd_int_t i = 0; i < n; ++i) {
+        if (chain->children_count[i] > chain->max_children) {
+            chain->max_children = chain->children_count[i];
+        }
+    }
+
+    /* Build parent path indices (root to each node) */
+    for (rd_int_t i = 0; i < n; ++i) {
+        rd_idx_t path[RD_MAX_LINKS];
+        rd_int_t plen = 0;
+        rd_idx_t cur = (rd_idx_t)i;
+        
+        while (cur >= 0 && plen < RD_MAX_LINKS) {
+            path[plen++] = cur;
+            cur = chain->parent_list[cur];
+        }
+        
+        /* Reverse to get root->node order */
+        for (rd_int_t j = 0; j < plen/2; ++j) {
+            rd_idx_t tmp = path[j];
+            path[j] = path[plen-1-j];
+            path[plen-1-j] = tmp;
+        }
+        
+        chain->parent_path_len[i] = plen;
+        for (rd_int_t j = 0; j < plen; ++j) {
+            chain->parent_path[i*n + j] = path[j];
+        }
+    }
+
+    /* Precompute spatial inertias */
+    for (rd_int_t i = 0; i < n; ++i) {
+        const rd_link_t* L = &model->links[i];
+        rd_real_t* Is = &chain->spatial_inertias[i*36];
+
+        rd_real_t m = (rd_real_t)L->inertia.mass;
+        rd_real_t cx = (rd_real_t)L->inertia.com.x;
+        rd_real_t cy = (rd_real_t)L->inertia.com.y;
+        rd_real_t cz = (rd_real_t)L->inertia.com.z;
+
+        rd_real_t Ixx = (rd_real_t)L->inertia.I_com.Ixx;
+        rd_real_t Iyy = (rd_real_t)L->inertia.I_com.Iyy;
+        rd_real_t Izz = (rd_real_t)L->inertia.I_com.Izz;
+        rd_real_t Ixy = (rd_real_t)L->inertia.I_com.Ixy;
+        rd_real_t Ixz = (rd_real_t)L->inertia.I_com.Ixz;
+        rd_real_t Iyz = (rd_real_t)L->inertia.I_com.Iyz;
+
+        /* Skew matrix [c]x */
+        rd_real_t cx_mat[9] = {
+            RD_REAL(0.0), -cz, cy,
+            cz, RD_REAL(0.0), -cx,
+            -cy, cx, RD_REAL(0.0)
+        };
+
+        /* [c]x * [c]x */
+        rd_real_t cx_sq[9];
+        rd_mat3_mul(cx_mat, cx_mat, cx_sq);
+
+        /* Initialize to zero */
+        for (rd_int_t k = 0; k < 36; ++k) Is[k] = RD_REAL(0.0);
+
+        /* Upper-left 3x3: m * I */
+        Is[0*6+0] = m;
+        Is[1*6+1] = m;
+        Is[2*6+2] = m;
+
+        /* Upper-right 3x3: -m * [c]x */
+        for (rd_int_t r = 0; r < 3; ++r) {
+            for (rd_int_t c = 0; c < 3; ++c) {
+                Is[r*6 + (c+3)] = -m * cx_mat[r*3 + c];
+            }
+        }
+
+        /* Lower-left 3x3: m * [c]x */
+        for (rd_int_t r = 0; r < 3; ++r) {
+            for (rd_int_t c = 0; c < 3; ++c) {
+                Is[(r+3)*6 + c] = m * cx_mat[r*3 + c];
+            }
+        }
+
+        /* Lower-right 3x3: Ic - m * [c]x * [c]x */
+        rd_real_t Ic[9] = {
+            Ixx, Ixy, Ixz,
+            Ixy, Iyy, Iyz,
+            Ixz, Iyz, Izz
+        };
+        for (rd_int_t r = 0; r < 3; ++r) {
+            for (rd_int_t c = 0; c < 3; ++c) {
+                Is[(r+3)*6 + (c+3)] = Ic[r*3 + c] - m * cx_sq[r*3 + c];
+            }
+        }
+    }
+
+    /* Build topological order (simple BFS from roots) */
+    rd_int_t count = 0;
+    for (rd_int_t i = 0; i < n; ++i) {
+        if (chain->parent_list[i] == -1) {
+            chain->topo_order[count++] = (rd_idx_t)i;
+            /* Add children recursively */
+            for (rd_int_t j = 0; j < n; ++j) {
+                if (chain->parent_list[j] == i) {
+                    chain->topo_order[count++] = (rd_idx_t)j;
+                    for (rd_int_t k = 0; k < n; ++k) {
+                        if (chain->parent_list[k] == j) {
+                            chain->topo_order[count++] = (rd_idx_t)k;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /* Ensure all nodes are included */
+    for (rd_int_t i = 0; i < n; ++i) {
+        rd_int_t present = 0;
+        for (rd_int_t j = 0; j < count; ++j) {
+            if (chain->topo_order[j] == i) {
+                present = 1;
+                break;
+            }
+        }
+        if (!present) {
+            chain->topo_order[count++] = (rd_idx_t)i;
+        }
+    }
+
+    return RD_OK;
+}
+
+void rd_chain_free(rd_chain_t* chain) {
+    if (!chain) return;
+    
+    RD_FREE(chain->parent_list);
+    RD_FREE(chain->topo_order);
+    RD_FREE(chain->children_count);
+    RD_FREE(chain->children_list);
+    RD_FREE(chain->joint_idx);
+    RD_FREE(chain->joint_type);
+    RD_FREE(chain->axes);
+    RD_FREE(chain->T_joint_offset);
+    RD_FREE(chain->T_link_offset);
+    
+    if (chain->frame_names) {
+        for (rd_int_t i = 0; i < chain->n_nodes; ++i) {
+            RD_FREE(chain->frame_names[i]);
+        }
+        RD_FREE(chain->frame_names);
+    }
+    
+    RD_FREE(chain->parent_path);
+    RD_FREE(chain->parent_path_len);
+    RD_FREE(chain->spatial_inertias);
+    
+    /* Zero out the struct */
+    memset(chain, 0, sizeof(rd_chain_t));
+}
+
+rd_idx_t rd_chain_find_frame(const rd_chain_t* chain, const char* name) {
+    if (!chain || !name) return -1;
+    
+    for (rd_int_t i = 0; i < chain->n_nodes; ++i) {
+        if (strcmp(chain->frame_names[i], name) == 0) {
+            return (rd_idx_t)i;
+        }
+    }
+    return -1;
+}
