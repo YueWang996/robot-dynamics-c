@@ -44,11 +44,40 @@ def open_raw(port):
     return fd
 
 
-def reboot_to_bootsel():
-    """Best-effort: put a running board back into BOOTSEL."""
-    subprocess.run(["picotool", "reboot", "-f", "-u"],
-                   capture_output=True, text=True)
-    time.sleep(2.0)
+def in_bootsel():
+    """True if a board is already sitting in BOOTSEL."""
+    r = subprocess.run(["picotool", "info"], capture_output=True, text=True, timeout=20)
+    return r.returncode == 0 and "not in BOOTSEL" not in (r.stdout + r.stderr) \
+        and "No accessible RP-series devices" not in (r.stdout + r.stderr)
+
+
+def reboot_to_bootsel(deadline):
+    """
+    Put a running board into BOOTSEL, then wait for it to actually get there.
+
+    `picotool reboot -f -u` intermittently hangs -- it can be waiting on a
+    device that has already reset out from under it -- so it gets its own
+    timeout and the result is confirmed by polling for the BOOTSEL volume
+    rather than by trusting the exit code.
+    """
+    for attempt in range(3):
+        if os.path.exists("/Volumes/RP2350"):
+            return True
+        try:
+            subprocess.run(["picotool", "reboot", "-f", "-u"],
+                           capture_output=True, text=True, timeout=15)
+        except subprocess.TimeoutExpired:
+            print("[capture] picotool reboot hung; checking whether it landed anyway",
+                  flush=True)
+        for _ in range(40):
+            if os.path.exists("/Volumes/RP2350"):
+                time.sleep(1.0)
+                return True
+            if time.time() > deadline:
+                return False
+            time.sleep(0.25)
+        print(f"[capture] BOOTSEL did not appear, retry {attempt + 1}/3", flush=True)
+    return False
 
 
 def main():
@@ -60,20 +89,21 @@ def main():
 
     before = set(glob.glob("/dev/cu.usbmodem*"))
 
-    info = subprocess.run(["picotool", "info"], capture_output=True, text=True)
-    if "not in BOOTSEL mode" in (info.stdout + info.stderr) or info.returncode != 0:
+    deadline = time.time() + args.timeout
+    if not os.path.exists("/Volumes/RP2350"):
         print("[capture] board is running; rebooting into BOOTSEL", flush=True)
-        reboot_to_bootsel()
+        if not reboot_to_bootsel(deadline):
+            print("[capture] could not get the board into BOOTSEL", file=sys.stderr)
+            return 1
         before = set(glob.glob("/dev/cu.usbmodem*"))
 
     print(f"[capture] flashing {args.uf2}", flush=True)
     load = subprocess.run(["picotool", "load", "-x", args.uf2],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, timeout=180)
     print(load.stdout.strip() or load.stderr.strip(), flush=True)
     if load.returncode != 0:
         return 1
 
-    deadline = time.time() + args.timeout
     port = find_serial_port(before, deadline)
     if port is None:
         print("[capture] no serial port appeared", file=sys.stderr)

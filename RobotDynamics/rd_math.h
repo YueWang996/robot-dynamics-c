@@ -130,6 +130,70 @@ static RD_INLINE void rd_mat4_translate(const rd_real_t t[3], rd_real_t T[16]) {
     T[12] = t[0]; T[13] = t[1]; T[14] = t[2];
 }
 
+/*
+ * C = A * B for SE(3) operands only.
+ *
+ * Every transform this library composes is a rigid motion, so the bottom row
+ * is always [0 0 0 1] and a quarter of rd_mat4_mul's work goes into
+ * rediscovering that. This does the rotation block and the translation
+ * directly: 36 multiplies instead of 64.
+ */
+static RD_INLINE void rd_mat4_mul_se3(const rd_real_t* RD_RESTRICT A,
+                                      const rd_real_t* RD_RESTRICT B,
+                                      rd_real_t* RD_RESTRICT C) {
+    for (int c = 0; c < 3; ++c) {
+        const rd_real_t b0 = B[c*4 + 0], b1 = B[c*4 + 1], b2 = B[c*4 + 2];
+        C[c*4 + 0] = A[0]*b0 + A[4]*b1 + A[8]*b2;
+        C[c*4 + 1] = A[1]*b0 + A[5]*b1 + A[9]*b2;
+        C[c*4 + 2] = A[2]*b0 + A[6]*b1 + A[10]*b2;
+        C[c*4 + 3] = RD_REAL(0.0);
+    }
+    {
+        const rd_real_t t0 = B[12], t1 = B[13], t2 = B[14];
+        C[12] = A[0]*t0 + A[4]*t1 + A[8]*t2  + A[12];
+        C[13] = A[1]*t0 + A[5]*t1 + A[9]*t2  + A[13];
+        C[14] = A[2]*t0 + A[6]*t1 + A[10]*t2 + A[14];
+        C[15] = RD_REAL(1.0);
+    }
+}
+
+/*
+ * Rotation about a coordinate axis, written straight into a 4x4.
+ *
+ * rd_axis_t admits only +-X, +-Y and +-Z, so the general axis-angle path --
+ * which normalises the axis with a sqrt and a divide and then evaluates
+ * Rodrigues' formula -- is rederiving something already fixed by the type.
+ * Falls through to the general form if the axis is not a unit coordinate
+ * direction, so a hand-written model cannot be silently mis-rotated.
+ */
+static RD_INLINE int rd_mat4_axis_rotation(const rd_real_t axis[3], rd_real_t q,
+                                           rd_real_t T[16]) {
+    rd_real_t s, c;
+    int which = -1, sign = 0;
+
+    for (int i = 0; i < 3; ++i) {
+        if (axis[i] == RD_REAL(1.0) || axis[i] == RD_REAL(-1.0)) {
+            if (which >= 0) return 0;                  /* more than one axis set */
+            which = i;
+            sign = (axis[i] > RD_REAL(0.0)) ? 1 : -1;
+        } else if (axis[i] != RD_REAL(0.0)) {
+            return 0;                                  /* not axis-aligned */
+        }
+    }
+    if (which < 0) return 0;
+
+    rd_sincos(q, &s, &c);
+    if (sign < 0) s = -s;
+
+    rd_mat4_identity(T);
+    switch (which) {
+        case 0: T[5] = c;  T[6] = s;   T[9] = -s;  T[10] = c; break;  /* Rx */
+        case 1: T[0] = c;  T[2] = -s;  T[8] = s;   T[10] = c; break;  /* Ry */
+        default: T[0] = c; T[1] = s;   T[4] = -s;  T[5]  = c; break;  /* Rz */
+    }
+    return 1;
+}
+
 /* Ti = inv(T) for SE3 */
 static RD_INLINE void rd_mat4_inv(const rd_real_t T[16], rd_real_t Ti[16]) {
     rd_real_t R[9] = {T[0],T[4],T[8], T[1],T[5],T[9], T[2],T[6],T[10]};

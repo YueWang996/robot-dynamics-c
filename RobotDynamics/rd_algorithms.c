@@ -17,6 +17,7 @@
 static RD_INLINE void algo_motion_transform(rd_int_t jtype, const rd_real_t axis[3],
                                             rd_real_t q, rd_real_t T[16]) {
     if (jtype == RD_JOINT_REVOLUTE) {
+        if (rd_mat4_axis_rotation(axis, q, T)) return;
         rd_real_t R[9];
         rd_rot_axis_angle(axis, q, R);
         rd_real_t t0[3] = {RD_REAL(0.0), RD_REAL(0.0), RD_REAL(0.0)};
@@ -29,23 +30,110 @@ static RD_INLINE void algo_motion_transform(rd_int_t jtype, const rd_real_t axis
     }
 }
 
+/* out = A * [p]x, row-major 3x3. Each column is a cross product: 18 mults. */
+static RD_INLINE void algo_mat3_mul_skew(const rd_real_t A[9], const rd_real_t p[3],
+                                         rd_real_t out[9]) {
+    for (int i = 0; i < 3; ++i) {
+        const rd_real_t a0 = A[i*3+0], a1 = A[i*3+1], a2 = A[i*3+2];
+        out[i*3+0] =  a1*p[2] - a2*p[1];
+        out[i*3+1] = -a0*p[2] + a2*p[0];
+        out[i*3+2] =  a0*p[1] - a1*p[0];
+    }
+}
+
+/* out = [p]x * A, row-major 3x3. 18 mults. */
+static RD_INLINE void algo_skew_mul_mat3(const rd_real_t p[3], const rd_real_t A[9],
+                                         rd_real_t out[9]) {
+    for (int j = 0; j < 3; ++j) {
+        const rd_real_t a0 = A[0*3+j], a1 = A[1*3+j], a2 = A[2*3+j];
+        out[0*3+j] = -p[2]*a1 + p[1]*a2;
+        out[1*3+j] =  p[2]*a0 - p[0]*a2;
+        out[2*3+j] = -p[1]*a0 + p[0]*a1;
+    }
+}
+
+/* out = R^T * C * R, row-major 3x3. */
+static RD_INLINE void algo_congruence3(const rd_real_t R[9], const rd_real_t C[9],
+                                       rd_real_t out[9]) {
+    rd_real_t CR[9];
+    rd_mat3_mul(C, R, CR);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out[i*3+j] = R[0*3+i]*CR[0*3+j]
+                       + R[1*3+i]*CR[1*3+j]
+                       + R[2*3+i]*CR[2*3+j];
+        }
+    }
+}
+
 /*
  * I_accum += X^T * I_in * X, with X = Ad(T).
  *
  * Callers pass state->Ti, the pose of the parent expressed in the child, which
  * makes X the motion transform from the parent frame into the child's. That is
  * the direction the composite/articulated inertia congruence needs.
+ *
+ * This is the hot spot of both rd_crba() and rd_aba(), so it is written against
+ * the structure rather than as two dense 6x6 products. Writing
+ * I = [[A11, A12], [A21, A22]] and X = [[R, [p]x R], [0, R]], the congruence is
+ *
+ *   TL = R^T A11 R
+ *   TR = R^T (A11 P + A12) R                       P = [p]x
+ *   BL = TR^T
+ *   BR = R^T (A22 + A21 P + (A21 P)^T - P A11 P) R
+ *
+ * which needs 216 multiplies instead of 432, skips X's 3x3 zero block entirely,
+ * gets the lower-left triangle for free from symmetry, and never materialises a
+ * 6x6 temporary.
  */
 static void algo_transform_inertia_accumulate(const rd_real_t T[16],
                                               const rd_real_t* I_in,
                                               rd_real_t* I_accum) {
-    rd_real_t X[36], XT[36], tmp[36], res[36];
+    /* R row-major, p, out of the column-major T */
+    const rd_real_t R[9] = { T[0], T[4], T[8],
+                             T[1], T[5], T[9],
+                             T[2], T[6], T[10] };
+    const rd_real_t p[3] = { T[12], T[13], T[14] };
 
-    rd_spatial_adjoint(T, X);
-    rd_mat6_mul(I_in, X, tmp);
-    rd_mat6_transpose(X, XT);
-    rd_mat6_mul(XT, tmp, res);
-    rd_mat6_add(I_accum, res, I_accum);
+    rd_real_t A11[9], A12[9], A21[9], A22[9];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            A11[i*3+j] = I_in[i*6 + j];
+            A12[i*3+j] = I_in[i*6 + 3 + j];
+            A21[i*3+j] = I_in[(i+3)*6 + j];
+            A22[i*3+j] = I_in[(i+3)*6 + 3 + j];
+        }
+    }
+
+    /* C12 = A11 P + A12 */
+    rd_real_t C12[9];
+    algo_mat3_mul_skew(A11, p, C12);
+    for (int k = 0; k < 9; ++k) C12[k] += A12[k];
+
+    /* C22 = A22 + A21 P + (A21 P)^T - P A11 P */
+    rd_real_t t1[9], t2[9], t3[9], C22[9];
+    algo_mat3_mul_skew(A21, p, t1);      /* A21 P            */
+    algo_skew_mul_mat3(p, A11, t2);      /* P A11            */
+    algo_mat3_mul_skew(t2, p, t3);       /* P A11 P          */
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            C22[i*3+j] = A22[i*3+j] + t1[i*3+j] + t1[j*3+i] - t3[i*3+j];
+        }
+    }
+
+    rd_real_t S11[9], S12[9], S22[9];
+    algo_congruence3(R, A11, S11);
+    algo_congruence3(R, C12, S12);
+    algo_congruence3(R, C22, S22);
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            I_accum[i*6 + j]         += S11[i*3+j];
+            I_accum[i*6 + 3 + j]     += S12[i*3+j];
+            I_accum[(i+3)*6 + j]     += S12[j*3+i];   /* BL = TR^T */
+            I_accum[(i+3)*6 + 3 + j] += S22[i*3+j];
+        }
+    }
 }
 
 /* Velocity of a link relative to its parent: v_i - Ad(Ti) v_parent. */
@@ -143,18 +231,18 @@ rd_status_t rd_fk_frame(const rd_chain_t* chain,
 
     for (rd_int_t pi = 0; pi < plen; ++pi) {
         rd_idx_t node = path[pi];
-        rd_mat4_mul(T_out, &chain->T_joint_offset[node*16], Ttmp1);
+        rd_mat4_mul_se3(T_out, &chain->T_joint_offset[node*16], Ttmp1);
 
         rd_idx_t jidx = chain->joint_idx[node];
         if (jidx >= 0 && q_joints) {
             rd_real_t Tm[16];
             algo_motion_transform(chain->joint_type[node], &chain->axes[jidx*3],
                                   q_joints[jidx], Tm);
-            rd_mat4_mul(Ttmp1, Tm, Ttmp2);
+            rd_mat4_mul_se3(Ttmp1, Tm, Ttmp2);
         } else {
             memcpy(Ttmp2, Ttmp1, 16*sizeof(rd_real_t));
         }
-        rd_mat4_mul(Ttmp2, &chain->T_link_offset[node*16], T_out);
+        rd_mat4_mul_se3(Ttmp2, &chain->T_link_offset[node*16], T_out);
     }
     return RD_OK;
 }

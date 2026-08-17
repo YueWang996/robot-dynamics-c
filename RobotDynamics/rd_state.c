@@ -12,6 +12,7 @@
 static void state_motion_transform(rd_int_t jtype, const rd_real_t axis[3],
                                    rd_real_t q, rd_real_t T[16]) {
     if (jtype == RD_JOINT_REVOLUTE) {
+        if (rd_mat4_axis_rotation(axis, q, T)) return;
         rd_real_t R[9];
         rd_rot_axis_angle(axis, q, R);
         rd_real_t t0[3] = {0};
@@ -92,8 +93,8 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
              * when it seeds its accumulator with the base transform. */
             rd_real_t T_base[16];
             state_base_transform(q_base, T_base);
-            rd_mat4_mul(T_base, &chain->T_joint_offset[node*16], Ttmp);
-            rd_mat4_mul(Ttmp, &chain->T_link_offset[node*16], T_pc);
+            rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], Ttmp);
+            rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
         } else {
             rd_real_t T_motion[16];
             if (jidx >= 0 && q_joints) {
@@ -102,8 +103,8 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
             } else {
                 rd_mat4_identity(T_motion);
             }
-            rd_mat4_mul(&chain->T_joint_offset[node*16], T_motion, Ttmp);
-            rd_mat4_mul(Ttmp, &chain->T_link_offset[node*16], T_pc);
+            rd_mat4_mul_se3(&chain->T_joint_offset[node*16], T_motion, Ttmp);
+            rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
         }
 
         memcpy(&state->T_parent_to_child[node*16], T_pc, 16*sizeof(rd_real_t));
@@ -118,7 +119,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
              * relative to the world for a fixed one. */
             memcpy(Tw, T_pc, 16*sizeof(rd_real_t));
         } else {
-            rd_mat4_mul(&state->T_world[parent*16], T_pc, Tw);
+            rd_mat4_mul_se3(&state->T_world[parent*16], T_pc, Tw);
         }
 
         /* 3. Joint motion subspace */
