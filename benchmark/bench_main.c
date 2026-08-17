@@ -120,7 +120,7 @@ static void make_configuration(rd_int_t nj, rd_int_t nv, rd_int_t base_dof) {
 /* Timing harness                                                             */
 /* ========================================================================== */
 
-typedef void (*bench_fn_t)(const rd_chain_t*, const rd_state_t*, rd_idx_t);
+typedef rd_status_t (*bench_fn_t)(const rd_chain_t*, const rd_state_t*, rd_idx_t);
 
 typedef struct {
     const char* name;
@@ -164,60 +164,70 @@ static double measure(bench_fn_t fn, const rd_chain_t* chain,
 /* The algorithms under test                                                  */
 /* ========================================================================== */
 
-static void case_update_kinematics(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_update_kinematics(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_update_kinematics(c, (rd_state_t*)s, g_has_fb ? g_q_base : NULL, g_q, g_qd);
+    rd_status_t st = rd_update_kinematics(c, (rd_state_t*)s, g_has_fb ? g_q_base : NULL, g_q, g_qd);
     g_checksum += s->T_world[0];
+    return st;
 }
 
-static void case_fk_frame(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_fk_frame(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)s;
-    rd_fk_frame(c, g_q_base, g_q, eef, g_T);
+    rd_status_t st = rd_fk_frame(c, g_q_base, g_q, eef, g_T);
     g_checksum += g_T[12];
+    return st;
 }
 
-static void case_jacobian(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_jacobian(c, s, eef, RD_FRAME_WORLD, g_J);
+static rd_status_t case_jacobian(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    rd_status_t st = rd_jacobian(c, s, eef, RD_FRAME_WORLD, g_J);
     g_checksum += g_J[0];
+    return st;
 }
 
-static void case_jacobian_local(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_jacobian(c, s, eef, RD_FRAME_LOCAL, g_J);
+static rd_status_t case_jacobian_local(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    rd_status_t st = rd_jacobian(c, s, eef, RD_FRAME_LOCAL, g_J);
     g_checksum += g_J[0];
+    return st;
 }
 
-static void case_rnea(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_rnea(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_rnea(c, s, g_qdd, NULL, g_tau);
+    rd_status_t st = rd_rnea(c, s, g_qdd, NULL, g_tau);
     g_checksum += g_tau[0];
+    return st;
 }
 
-static void case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_aba(c, s, g_tau_in, NULL, g_qdd_out);
+    rd_status_t st = rd_aba(c, s, g_tau_in, NULL, g_qdd_out);
     g_checksum += g_qdd_out[0];
+    return st;
 }
 
-static void case_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_crba(c, s, g_M);
+    rd_status_t st = rd_crba(c, s, g_M);
     g_checksum += g_M[0];
+    return st;
 }
 
-static void case_gravity(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_gravity(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
-    rd_gravity(c, s, NULL, g_tau);
+    rd_status_t st = rd_gravity(c, s, NULL, g_tau);
     g_checksum += g_tau[0];
+    return st;
 }
 
-static void case_spatial_accel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_spatial_acceleration(c, s, g_qdd, eef, RD_FRAME_WORLD, g_acc);
+static rd_status_t case_spatial_accel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    rd_status_t st = rd_spatial_acceleration(c, s, g_qdd, eef, RD_FRAME_WORLD, g_acc);
     g_checksum += g_acc[0];
+    return st;
 }
 
-static void case_spatial_vel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
-    rd_spatial_velocity(c, s, eef, RD_FRAME_WORLD, g_vel);
+static rd_status_t case_spatial_vel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    rd_status_t st = rd_spatial_velocity(c, s, eef, RD_FRAME_WORLD, g_vel);
     g_checksum += g_vel[0];
+    return st;
 }
 
 /*
@@ -231,7 +241,7 @@ static void case_spatial_vel(const rd_chain_t* c, const rd_state_t* s, rd_idx_t 
  * that touches no floating point, which isolates how much of the Arm/RISC-V gap
  * is the missing FPU rather than the core itself.
  */
-static void case_alloc_probe(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+static rd_status_t case_alloc_probe(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)s; (void)eef;
     rd_int_t n = c->n_nodes;
     void* a = RD_CALLOC(n * 6, sizeof(rd_real_t));
@@ -239,6 +249,7 @@ static void case_alloc_probe(const rd_chain_t* c, const rd_state_t* s, rd_idx_t 
     void* ic = RD_MALLOC((size_t)n * 36 * sizeof(rd_real_t));
     g_checksum += (rd_real_t)(a != NULL) + (rd_real_t)(f != NULL) + (rd_real_t)(ic != NULL);
     RD_FREE(a); RD_FREE(f); RD_FREE(ic);
+    return RD_OK;
 }
 
 static const bench_case_t g_cases[] = {
@@ -322,6 +333,20 @@ static void run_robot(const bench_robot_t* robot) {
                          g_has_fb ? g_q_base : NULL, g_q, g_qd);
 
     for (int i = 0; i < N_CASES; ++i) {
+        /*
+         * Run once and check the status first. An algorithm that bails out
+         * early -- rd_aba on a model whose links carry no inertia, for
+         * instance -- would otherwise be "timed" at the cost of its error
+         * return, which is worse than no number at all.
+         */
+        rd_status_t st = g_cases[i].fn(&g_chain, &g_state, eef);
+        if (st != RD_OK) {
+            printf("%s,%s,%s,%d,%d,%d,,,unsupported(%d)\n",
+                   BENCH_ARCH_SHORT, robot->name, g_cases[i].name,
+                   (int)n, (int)nj, (int)nv, (int)st);
+            continue;
+        }
+
         uint32_t iters = 0;
         double ns = measure(g_cases[i].fn, &g_chain, &g_state, eef, &iters);
 

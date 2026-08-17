@@ -10,43 +10,34 @@ here agrees with Pinocchio to machine precision.
 
 ---
 
-> **Measurement status.** The RP2350 tables below were captured against v0.1.0.
-> They predate v0.2.0's API rework, which moved all algorithm scratch into
-> `rd_state_t` (removing the per-call `malloc` these tables measure) and added
-> `rd_aba`. They therefore have no `aba` row, and the RNEA/CRBA figures still
-> include allocator traffic that the current code does not perform. The host
-> column has been refreshed; the two board columns need the Pico reconnected to
-> re-measure.
-
----
-
 ## Summary
 
-1. **The Arm cores are 4–14x faster than the RISC-V cores** on this workload
-   (median 10.3x across 36 floating-point measurements) — not because Hazard3 is
+1. **The Arm cores are 4–13x faster than the RISC-V cores** on this workload
+   (median 9.5x across 39 floating-point measurements) — not because Hazard3 is
    a weak core, but because **the RP2350's RISC-V cores have no FPU**. Every
    `float` operation is emulated in software. An integer-only control
-   measurement in the same run shows RISC-V up to 1.5x *faster*, which isolates
+   measurement in the same run shows RISC-V up to 1.4x *faster*, which isolates
    floating point as the entire cause.
 
-2. **On the Arm cores the library is comfortably real-time.** A full torque
-   control tick (`update_kinematics` + `rnea`) costs 395 µs for an 18-DOF Go2
-   and 58 µs for the 9-DOF spine — 2.5 kHz and 17.2 kHz. On the RISC-V cores the
-   same Go2 tick costs 4.1 ms, i.e. 246 Hz, well under a 1 kHz torque loop.
+2. **On the Arm cores the library is comfortably real-time.** A torque control
+   tick (`update_kinematics` + `rnea`) costs 396 µs for an 18-DOF Go2 and 54 µs
+   for the 9-DOF spine — 2.5 kHz and 18.4 kHz. On the RISC-V cores the same Go2
+   tick costs 4.1 ms, i.e. 246 Hz, well under a 1 kHz torque loop.
 
-3. **CRBA is the most expensive algorithm by a wide margin** — 1.9x the cost of
-   RNEA on the smallest robot, rising to 3.0x on Go2. It is the clearest
-   optimisation target.
+3. **Forward dynamics costs more than the mass matrix.** `rd_aba` runs at
+   4.1–4.4x `rd_rnea` and **1.4–1.6x `rd_crba`**, which is backwards from what
+   ABA is supposed to buy you. Both algorithms spend most of their time in the
+   same dense 6x6 inertia congruence, and CRBA is the one that has been thought
+   about. This is the clearest optimisation target in the library.
 
-4. **Soft-float execution time is data-dependent.** An operation that does
-   provably identical work spans 8.73–13.58 µs on RISC-V depending on the
-   *values* flowing through it, while staying flat at 0.99–1.00 µs on Arm. That
+4. **ABA scales almost perfectly linearly** — 24.0, 24.2 and 24.1 µs per link on
+   the three platforms that have inertial data, across a 4-link chain and a
+   31-link branched tree.
+
+5. **Soft-float execution time is data-dependent.** An operation that does
+   provably identical work spans 8.29–13.67 µs on RISC-V depending on the
+   *values* flowing through it, while staying flat at 1.05–1.06 µs on Arm. That
    matters if you need a worst-case execution time bound.
-
-5. **Both `rd_rnea_cached` and `rd_crba_cached` call `malloc`/`free` on every
-   invocation.** On Arm this is 5.6–22.2% of RNEA's total cost, and it makes the
-   library's own `RD_USE_STATIC_ALLOC=1` mode non-functional for those two
-   algorithms.
 
 ---
 
@@ -100,13 +91,16 @@ Go2 keeps all 31 URDF links, including the 12 fixed-joint rotor bodies. They
 carry inertia and are traversed like any other link, so the numbers reflect the
 URDF as written rather than a fixed-joint-merged variant.
 
-The floating-base platforms are driven through `rd_update_kinematics_fb` with a
-non-identity base pose and a non-zero base twist, and their RNEA and spatial
-acceleration calls receive a non-zero base acceleration. These are the costs of
-the real floating-base path, not of a base pinned at the origin.
+The floating-base platforms are driven with a non-identity base pose, a non-zero
+base twist and a non-zero base acceleration, so these are the costs of the real
+floating-base path rather than of a base pinned at the origin.
 
-`aba` (forward dynamics) has been implemented since these numbers were taken and
-will appear as its own row after the re-measurement.
+**`simple_arm` has no inertial data.** Its URDF declares no `<inertial>` block on
+any link, so every mass and inertia is zero. `rd_aba` correctly refuses it with
+`RD_ERR_SINGULAR` — a massless moving link has no articulated inertia to invert —
+and the harness reports that rather than timing the error return. Its RNEA, CRBA
+and gravity rows do run, but they are traversal cost over a zero inertia and are
+not physically meaningful; read that column as a kinematics data point only.
 
 ---
 
@@ -128,12 +122,15 @@ will appear as its own row after the re-measurement.
 * Joint and base states come from a fixed xorshift32 seed, so both
   architectures see bit-identical inputs. Angles are kept away from zero so no
   trigonometric fast path is taken.
-* The cached algorithms follow the library's intended pattern: one
-  `rd_update_kinematics_fb` primes `rd_state_t`, then each algorithm reuses it.
+* The algorithms follow the library's intended pattern: one
+  `rd_update_kinematics` primes `rd_state_t`, then each algorithm reuses it.
   That priming call is timed separately as its own line item.
+* Every algorithm is run once and its status checked before being timed. One
+  that bails out early would otherwise be "measured" at the cost of its error
+  return, which is worse than reporting nothing.
 
 **Repeatability.** The Arm suite was flashed and run twice from scratch. Across
-all 44 measurements the largest deviation between runs was **below 0.005%**;
+all measurements the largest deviation between runs was **below 0.005%**;
 most were bit-identical. The workload is deterministic and the board has no
 frequency scaling, so run-to-run noise is not a factor in anything below.
 
@@ -145,33 +142,33 @@ Microseconds per call. Multiply by 150 for cycles.
 
 | Algorithm | simple_arm<br><sub>3L / 2 dof</sub> | spine<br><sub>4L / 9 dof</sub> | xarm7<br><sub>10L / 7 dof</sub> | go2<br><sub>31L / 18 dof</sub> |
 |---|---|---|---|---|
-| `update_kinematics` | 21.89 | 31.27 | 75.72 | 224.42 |
-| `fk_frame` | 15.72 | 21.57 | 49.75 | 24.55 |
-| `jacobian_world` | 2.91 | 8.25 | 7.75 | 9.15 |
-| `jacobian_local` | 4.23 | 13.00 | 11.52 | 18.40 |
-| `rnea` | 20.53 | 26.79 | 58.65 | 170.27 |
-| `gravity_comp` | 20.29 | 26.35 | 57.74 | 167.27 |
-| `crba` | 38.82 | 64.00 | 175.51 | 517.19 |
-| `spatial_accel` | 8.49 | 10.47 | 22.01 | 62.71 |
-| `spatial_velocity` | 0.99 | 1.00 | 1.00 | 0.99 |
-| *`_heap_rnea`* (probe) | 4.57 | 5.06 | 5.79 | 9.62 |
-| *`_heap_crba`* (probe) | 1.49 | 1.46 | 1.46 | 1.49 |
+| `update_kinematics` | 21.98 | 30.91 | 76.11 | 224.14 |
+| `fk_frame` | 15.60 | 21.45 | 49.47 | 24.37 |
+| `jacobian_world` | 3.06 | 8.57 | 8.00 | 9.47 |
+| `jacobian_local` | 4.38 | 13.32 | 11.79 | 18.71 |
+| `rnea` | 17.33 | 23.44 | 56.99 | 171.47 |
+| `aba` | n/a | 95.83 | 241.62 | 746.57 |
+| `crba` | 37.45 | 59.16 | 176.19 | 505.24 |
+| `gravity` | 11.39 | 15.23 | 36.13 | 106.54 |
+| `spatial_accel` | 6.96 | 9.21 | 21.55 | 64.88 |
+| `spatial_velocity` | 1.05 | 1.06 | 1.06 | 1.05 |
+| *`_heap_probe`* (control) | 6.51 | 7.03 | 7.87 | 11.70 |
 
 ## Results — RISC-V (Hazard3 @ 150 MHz)
 
 | Algorithm | simple_arm | spine | xarm7 | go2 |
 |---|---|---|---|---|
-| `update_kinematics` | 179.17 | 307.43 | 734.12 | 2015.03 |
-| `fk_frame` | 143.03 | 241.64 | 542.34 | 270.72 |
-| `jacobian_world` | 12.38 | 60.47 | 49.34 | 60.72 |
-| `jacobian_local` | 28.77 | 162.85 | 137.06 | 208.08 |
-| `rnea` | 123.64 | 281.31 | 676.08 | 2046.28 |
-| `gravity_comp` | 121.78 | 267.16 | 666.51 | 1982.25 |
-| `crba` | 239.73 | 554.24 | 1825.47 | 4122.66 |
-| `spatial_accel` | 51.38 | 111.41 | 243.46 | 718.94 |
-| `spatial_velocity` | 8.73 | 13.54 | 13.57 | 13.58 |
-| *`_heap_rnea`* (probe) | 3.83 | 4.22 | 4.45 | 6.33 |
-| *`_heap_crba`* (probe) | 1.55 | 1.56 | 1.55 | 1.60 |
+| `update_kinematics` | 179.01 | 302.56 | 724.08 | 2021.88 |
+| `fk_frame` | 143.09 | 236.50 | 531.98 | 265.55 |
+| `jacobian_world` | 12.64 | 60.38 | 50.47 | 61.21 |
+| `jacobian_local` | 29.15 | 163.11 | 138.45 | 209.16 |
+| `rnea` | 120.46 | 271.95 | 674.90 | 2041.12 |
+| `aba` | n/a | 906.27 | 2380.12 | 6292.78 |
+| `crba` | 237.48 | 504.82 | 1818.91 | 3921.03 |
+| `gravity` | 60.99 | 105.25 | 282.49 | 793.11 |
+| `spatial_accel` | 49.70 | 105.91 | 244.64 | 726.21 |
+| `spatial_velocity` | 8.29 | 13.65 | 13.67 | 13.63 |
+| *`_heap_probe`* (control) | 5.92 | 6.34 | 6.67 | 8.55 |
 
 ## RISC-V ÷ Arm
 
@@ -179,43 +176,51 @@ Higher means RISC-V is slower.
 
 | Algorithm | simple_arm | spine | xarm7 | go2 |
 |---|---|---|---|---|
-| `update_kinematics` | 8.19x | 9.83x | 9.70x | 8.98x |
-| `fk_frame` | 9.10x | 11.20x | 10.90x | 11.03x |
-| `jacobian_world` | 4.26x | 7.33x | 6.36x | 6.63x |
-| `jacobian_local` | 6.80x | 12.53x | 11.90x | 11.31x |
-| `rnea` | 6.02x | 10.50x | 11.53x | 12.02x |
-| `gravity_comp` | 6.00x | 10.14x | 11.54x | 11.85x |
-| `crba` | 6.18x | 8.66x | 10.40x | 7.97x |
-| `spatial_accel` | 6.05x | 10.64x | 11.06x | 11.47x |
-| `spatial_velocity` | 8.79x | 13.54x | 13.57x | 13.67x |
-| **`_heap_rnea`** (integer only) | **0.84x** | **0.83x** | **0.77x** | **0.66x** |
-| **`_heap_crba`** (integer only) | **1.04x** | **1.07x** | **1.06x** | **1.07x** |
+| `update_kinematics` | 8.14x | 9.79x | 9.51x | 9.02x |
+| `fk_frame` | 9.17x | 11.02x | 10.75x | 10.90x |
+| `jacobian_world` | 4.13x | 7.04x | 6.31x | 6.46x |
+| `jacobian_local` | 6.65x | 12.25x | 11.74x | 11.18x |
+| `rnea` | 6.95x | 11.60x | 11.84x | 11.90x |
+| `aba` | -- | 9.46x | 9.85x | 8.43x |
+| `crba` | 6.34x | 8.53x | 10.32x | 7.76x |
+| `gravity` | 5.36x | 6.91x | 7.82x | 7.44x |
+| `spatial_accel` | 7.14x | 11.50x | 11.35x | 11.19x |
+| `spatial_velocity` | 7.87x | 12.88x | 12.89x | 12.94x |
+| **`_heap_probe`** (integer only) | **0.91x** | **0.90x** | **0.85x** | **0.73x** |
 
-The last two rows are the control. They exercise `malloc`/`free` — pointer
-arithmetic and free-list walking, no floating point at all — and RISC-V ties or
-wins every one of them, running the allocator up to 1.5x faster than the M33.
-Hazard3 is not a slow core. It simply has no FPU, and this library is almost
-entirely floating-point arithmetic.
+The last row is the control. It exercises `malloc`/`free` — pointer arithmetic
+and free-list walking, no floating point at all — and RISC-V wins every one of
+them, running the allocator up to 1.4x faster than the M33. Hazard3 is not a
+slow core. It simply has no FPU, and this library is almost entirely
+floating-point arithmetic. (The library itself no longer allocates anywhere;
+this probe exists only as an architecture comparison that touches no floats.)
 
 ---
 
 ## Where the time goes
 
-### CRBA dominates
+### The 6x6 inertia congruence dominates both CRBA and ABA
 
-CRBA costs **1.9–3.0x** what RNEA costs, and the ratio grows with model size.
-For Go2 on Arm that is 517 µs against RNEA's 170 µs.
+| Robot | dof | RNEA | ABA | ABA/RNEA | CRBA | ABA/CRBA | ABA per link |
+|---|---|---|---|---|---|---|---|
+| `spine` | 9 | 23.44 µs | 95.83 µs | 4.09x | 59.16 µs | 1.62x | 24.0 µs |
+| `xarm7` | 7 | 56.99 µs | 241.62 µs | 4.24x | 176.19 µs | 1.37x | 24.2 µs |
+| `go2` | 18 | 171.47 µs | 746.57 µs | 4.35x | 505.24 µs | 1.48x | 24.1 µs |
 
-The cost sits in `algo_transform_inertia_accumulate`, which is called once per
-link and evaluates `XᵀIX` using two **dense** 6x6 `rd_mat6_mul` calls — 432
-multiplies and 360 adds per link, before the adjoint construction and the
-transpose. A spatial inertia is symmetric and its adjoint is block-structured
-with a zero block, so most of that arithmetic multiplies known zeros.
+Forward dynamics costing **more** than assembling the mass matrix is the wrong
+way round — ABA exists precisely to avoid building and factoring `M`. Both
+algorithms are dominated by the same function.
 
-There is a second, smaller cost: the mass-matrix assembly loop propagates each
-column's force to the root **twice** for floating-base models — once in the
-floating-base coupling block and again in the joint coupling block, walking the
-same parent chain both times.
+`algo_transform_inertia_accumulate` runs once per link and evaluates `XᵀIX` with
+two **dense** 6x6 `rd_mat6_mul` calls: 432 multiplies and 360 adds per link,
+before the adjoint construction and the transpose. A spatial inertia is
+symmetric and its adjoint is block-structured with a zero block, so most of that
+arithmetic multiplies known zeros. Exploiting that structure would cut roughly
+three quarters of the work out of the two most expensive algorithms at once.
+
+The per-link cost being identical to three significant figures across a 4-link
+serial chain and a 31-link branched tree confirms that this single function, not
+the tree walking around it, is where ABA's time goes.
 
 ### `fk_frame` scales with depth, not link count
 
@@ -228,15 +233,15 @@ at about 5 µs per level on Arm:
 
 | Platform | Links | Path length | `fk_frame` | µs per level |
 |---|---|---|---|---|
-| `simple_arm` | 3 | 3 | 15.72 µs | 5.24 |
-| `spine` | 4 | 4 | 21.57 µs | 5.39 |
-| `go2` | 31 | 5 | 24.55 µs | 4.91 |
-| `xarm7` | 10 | 10 | 49.75 µs | 4.97 |
+| `simple_arm` | 3 | 3 | 15.60 µs | 5.20 |
+| `spine` | 4 | 4 | 21.45 µs | 5.36 |
+| `go2` | 31 | 5 | 24.37 µs | 4.87 |
+| `xarm7` | 10 | 10 | 49.47 µs | 4.95 |
 
 If you only need one frame's pose, this is much cheaper than a full
-`update_kinematics` — 25 µs against 224 µs on Go2.
+`update_kinematics` — 24 µs against 224 µs on Go2.
 
-### `update_kinematics` is the single largest line item
+### `update_kinematics` is the largest single kinematics item
 
 It is the only algorithm that touches every link unconditionally, and the only
 one that calls `sinf`/`cosf` — once per actuated joint, through
@@ -244,29 +249,40 @@ one that calls `sinf`/`cosf` — once per actuated joint, through
 however called once per control tick regardless of how many algorithms follow,
 which is the entire point of the design.
 
-### Allocator traffic inside the control loop
+### `rd_gravity()` is now genuinely cheaper than RNEA
 
-| Robot | RNEA | of which heap | CRBA | of which heap |
-|---|---|---|---|---|
-| simple_arm | 20.53 µs | 4.57 µs (**22.2%**) | 38.82 µs | 1.49 µs (3.8%) |
-| spine | 26.79 µs | 5.06 µs (**18.9%**) | 64.00 µs | 1.46 µs (2.3%) |
-| xarm7 | 58.65 µs | 5.79 µs (9.9%) | 175.51 µs | 1.46 µs (0.8%) |
-| go2 | 170.27 µs | 9.62 µs (5.6%) | 517.19 µs | 1.49 µs (0.3%) |
+It runs the same recursion with the cached velocities suppressed, which drops
+the Coriolis cross-products and the `I v` bias force. That shows up as a
+consistent **0.62–0.66x** of full RNEA across all four platforms. Before v0.2.0
+this entry point was the same call as `rd_nonlinear_terms()` and cost exactly
+the same — the speedup is the semantic fix becoming visible.
 
-(Arm figures.) `rd_rnea_cached` calls `RD_CALLOC` twice and `RD_FREE` twice per
-invocation; `rd_crba_cached` calls `RD_MALLOC`/`RD_FREE` once. For small robots
-— exactly the ones you would put on a microcontroller — this is up to a fifth of
-the call. It is also a real-time hazard independent of its cost: `malloc` may
-take a lock and can fragment over a long run.
+### What removing the allocator bought
+
+v0.1.0 called `malloc`/`free` inside RNEA and CRBA on every invocation. Moving
+that scratch into `rd_state_t` for v0.2.0 shows up where you would expect —
+on the small models, where the allocator was a large fraction of a short call:
+
+| Robot | RNEA, v0.1.0 | RNEA, v0.2.0 | change |
+|---|---|---|---|
+| simple_arm | 20.53 µs | 17.33 µs | −16% |
+| spine | 26.79 µs | 23.44 µs | −13% |
+| xarm7 | 58.65 µs | 56.99 µs | −3% |
+| go2 | 170.27 µs | 171.47 µs | +1% |
+
+On Go2 it is a wash: the allocator was only 5.6% of that call, and the scratch
+now sits further away in memory. The reason to do it was never mainly speed —
+`malloc` in a control loop may take a lock and can fragment over a long run, and
+ABA's much larger workspace would have made the per-call allocation worse.
 
 ### Soft-float timing is data-dependent
 
-`rd_get_spatial_velocity_cached` does the same fixed amount of work for every
-robot: one memcpy and one 6-vector spatial transform. Its cost confirms that on
-Arm — **0.99, 1.00, 1.00, 0.99 µs** across the four platforms, flat to within
-the timer's resolution.
+`rd_spatial_velocity` does the same fixed amount of work for every robot: one
+memcpy and one 6-vector spatial transform. Its cost confirms that on Arm —
+**1.05, 1.06, 1.06, 1.05 µs** across the four platforms, flat to within the
+timer's resolution.
 
-On RISC-V the same call takes **8.73, 13.54, 13.57, 13.58 µs** — a 1.56x spread
+On RISC-V the same call takes **8.29, 13.65, 13.67, 13.63 µs** — a 1.65x spread
 for identical work, driven purely by the operand values. The soft-float helpers
 branch on zeros, exponent alignment and normalisation shifts, so execution time
 varies with the numbers themselves. If you need a worst-case execution time
@@ -281,14 +297,27 @@ A torque control tick of `update_kinematics` + `rnea`:
 
 | Robot | dof | Arm | max rate | RISC-V | max rate |
 |---|---|---|---|---|---|
-| `simple_arm` | 2 | 42.4 µs | 23.6 kHz | 303 µs | 3.3 kHz |
-| `spine` | 9 | 58.1 µs | 17.2 kHz | 589 µs | 1.7 kHz |
-| `xarm7` | 7 | 134.4 µs | 7.4 kHz | 1410 µs | 709 Hz |
-| `go2` | 18 | 394.7 µs | 2.5 kHz | 4061 µs | 246 Hz |
+| `simple_arm` | 2 | 39.3 µs | 25.4 kHz | 299 µs | 3.3 kHz |
+| `spine` | 9 | 54.4 µs | 18.4 kHz | 575 µs | 1.7 kHz |
+| `xarm7` | 7 | 133.1 µs | 7.5 kHz | 1399 µs | 715 Hz |
+| `go2` | 18 | 395.6 µs | 2.5 kHz | 4063 µs | 246 Hz |
 
 Adding CRBA, for operational-space or inverse-dynamics control that needs the
-mass matrix, on Arm: spine 122 µs (8.2 kHz), xarm7 310 µs (3.2 kHz), Go2 912 µs
+mass matrix, on Arm: spine 114 µs (8.8 kHz), xarm7 309 µs (3.2 kHz), Go2 901 µs
 (1.1 kHz).
+
+A **simulation** tick instead — `update_kinematics` + `aba` — is the expensive
+one, because ABA is:
+
+| Robot | dof | Arm | max rate | RISC-V | max rate |
+|---|---|---|---|---|---|
+| `spine` | 9 | 126.7 µs | 7.9 kHz | 1209 µs | 827 Hz |
+| `xarm7` | 7 | 317.7 µs | 3.1 kHz | 3104 µs | 322 Hz |
+| `go2` | 18 | 970.7 µs | 1.0 kHz | 8315 µs | 120 Hz |
+
+Go2 forward dynamics lands at 1.03 kHz on an Arm core — it clears a 1 kHz
+simulation loop, but only just, and that is the number the congruence
+optimisation above would move most.
 
 **Practical reading.** On the Arm cores every platform here clears a 1 kHz
 torque loop with margin, and Go2 clears it even with CRBA in the loop — barely.
@@ -304,12 +333,13 @@ Microseconds per call:
 
 | Algorithm | simple_arm | spine | xarm7 | go2 |
 |---|---|---|---|---|
-| `update_kinematics` | 0.04 | 0.07 | 0.16 | 0.41 |
+| `update_kinematics` | 0.04 | 0.06 | 0.15 | 0.40 |
 | `fk_frame` | 0.04 | 0.05 | 0.12 | 0.06 |
-| `rnea` | 0.07 | 0.10 | 0.20 | 0.48 |
-| `crba` | 0.08 | 0.13 | 0.36 | 0.91 |
+| `rnea` | 0.04 | 0.06 | 0.15 | 0.44 |
+| `aba` | n/a | 0.20 | 0.50 | 1.49 |
+| `crba` | 0.06 | 0.10 | 0.35 | 0.86 |
 
-Roughly 280–570x the Arm core's throughput, about what the clock ratio and a
+Roughly 360–620x the Arm core's throughput, about what the clock ratio and a
 wide out-of-order pipeline predict. Useful mostly as a sanity check that the
 algorithms are not pathologically slow.
 
@@ -367,10 +397,11 @@ model could still violate it.
 1. ~~Move RNEA/CRBA scratch into `rd_state_t`.~~ **Done in v0.2.0** — this was
    worth 5.6–22.2% of RNEA and made the control loop allocation-free.
 
-2. **Exploit structure in the CRBA inertia transform.** `XᵀIX` with a symmetric
-   `I` and a block-structured adjoint needs roughly a quarter of the dense-6x6
-   arithmetic currently spent. CRBA is the most expensive algorithm, so this is
-   the largest absolute win.
+2. **Exploit structure in the inertia congruence.** `XᵀIX` with a symmetric `I`
+   and a block-structured adjoint needs roughly a quarter of the dense-6x6
+   arithmetic currently spent. It is the dominant cost in *both* CRBA and ABA,
+   so this one change is the largest available win by a wide margin — and it is
+   what currently makes forward dynamics more expensive than the mass matrix.
 
 3. ~~Don't propagate each CRBA column to the root twice.~~ **Done in v0.2.0** —
    the two parent-chain walks are now one.
@@ -380,7 +411,7 @@ model could still violate it.
    `rd_fk_frame` then recomputes the same values.
 
 5. **Run dynamics on the Arm cores.** Nothing in the library needs changing —
-   this is a deployment decision, and it is worth 4–14x.
+   this is a deployment decision, and it is worth 4–13x.
 
 6. **If the RISC-V cores are unavoidable, consider fixed point.** With no FPU, a
    Q-format implementation would very likely beat soft float, and would restore

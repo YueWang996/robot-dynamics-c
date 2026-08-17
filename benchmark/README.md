@@ -94,13 +94,20 @@ python3 tools/report.py benchmark/results/*.csv
 * Primes `rd_state_t` with one `rd_update_kinematics` and then reuses it, which
   is how the library is meant to be driven. `update_kinematics` is timed as its
   own line item.
+* Checks each algorithm's status once before timing it, so an early error
+  return is never mistaken for a fast algorithm.
 
-Two rows in the output are prefixed `_heap_` and are **probes, not
-algorithms**. They replicate exactly the `malloc`/`free` traffic that
-`rd_rnea_cached` and `rd_crba_cached` perform internally on every call, so the
-report can attribute how much of each algorithm is allocator overhead rather
-than arithmetic. They are also the only integer-only measurements in the suite,
-which makes them a useful control when comparing the two architectures.
+The `_heap_probe` row is a **control, not an algorithm**. The library itself no
+longer allocates anywhere, so this exercises `malloc`/`free` purely because it
+is the only measurement in the suite that touches no floating point at all --
+which is what makes it useful when comparing the two architectures. If the
+Arm/RISC-V gap were about the core rather than the missing FPU, it would show up
+here too. It does not.
+
+An algorithm that returns an error is reported as `unsupported(<code>)` with an
+empty timing rather than being measured: `simple_arm`'s URDF has no inertial
+data, so `rd_aba` correctly refuses it and timing that error return would be
+meaningless.
 
 ## Adding a platform
 
@@ -111,3 +118,5 @@ which makes them a useful control when comparing the two architectures.
 3. If the model has more than 40 links or more than 32 velocity DOF, raise
    `BENCH_MAX_NODES` / `BENCH_MAX_NV` in `bench_main.c` and `RD_MAX_LINKS` /
    `RD_MAX_JOINTS` in `CMakeLists.txt`.
+4. Make sure the URDF actually carries `<inertial>` blocks if you want the
+   dynamics rows to mean anything.

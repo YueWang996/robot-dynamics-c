@@ -20,12 +20,12 @@ ALGO_ORDER = [
     "jacobian_world",
     "jacobian_local",
     "rnea",
-    "gravity_comp",
+    "aba",
     "crba",
+    "gravity_comp",
     "spatial_accel",
     "spatial_velocity",
-    "_heap_rnea",
-    "_heap_crba",
+    "_heap_probe",
 ]
 
 ROBOT_ORDER = ["simple_arm", "spine", "xarm7", "go2"]
@@ -60,10 +60,13 @@ def index(rows):
     shape = {}
     for r in rows:
         key = (r["arch"], r["robot"], r["algorithm"])
-        ns = float(r["ns_per_call"])
-        if key not in out or ns < out[key]:
-            out[key] = ns
         shape[r["robot"]] = (int(r["n_links"]), int(r["n_joints"]), int(r["nv"]))
+        if not r["ns_per_call"]:
+            out.setdefault(key, None)   # reported unsupported by the harness
+            continue
+        ns = float(r["ns_per_call"])
+        if out.get(key) is None or ns < out[key]:
+            out[key] = ns
     return out, shape
 
 
@@ -89,7 +92,7 @@ def table_per_arch(data, shape, arch, hz=150_000_000):
         for r in robots:
             ns = data.get((arch, r, algo))
             if ns is None:
-                cells.append("--")
+                cells.append("n/a" if (arch, r, algo) in data else "--")
             else:
                 present = True
                 cells.append(f"{fmt_us(ns)}")
@@ -142,22 +145,19 @@ def table_control_budget(data, shape):
     return "\n".join(lines)
 
 
-def table_heap_share(data, shape):
+def table_fd_vs_id(data, shape):
+    """Forward dynamics against inverse dynamics, and against CRBA."""
     lines = []
-    lines.append("| Robot | Arch | RNEA total | heap part | share | CRBA total | heap part | share |")
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("| Robot | dof | RNEA | ABA | ABA/RNEA | CRBA | ABA/CRBA |")
+    lines.append("|---|---|---|---|---|---|---|")
     for r in ROBOT_ORDER:
-        for arch in ("arm", "riscv"):
-            rn = data.get((arch, r, "rnea"))
-            hr = data.get((arch, r, "_heap_rnea"))
-            cr = data.get((arch, r, "crba"))
-            hc = data.get((arch, r, "_heap_crba"))
-            if None in (rn, hr, cr, hc):
-                continue
-            lines.append(
-                f"| {r} | {arch} | {fmt_us(rn)} us | {fmt_us(hr)} us | {hr/rn*100:.1f}% "
-                f"| {fmt_us(cr)} us | {fmt_us(hc)} us | {hc/cr*100:.1f}% |"
-            )
+        rn = data.get(("arm", r, "rnea"))
+        ab = data.get(("arm", r, "aba"))
+        cr = data.get(("arm", r, "crba"))
+        if None in (rn, ab, cr):
+            continue
+        lines.append(f"| `{r}` | {shape[r][2]} | {fmt_us(rn)} us | {fmt_us(ab)} us "
+                     f"| {ab/rn:.2f}x | {fmt_us(cr)} us | {ab/cr:.2f}x |")
     return "\n".join(lines)
 
 
@@ -177,8 +177,8 @@ def main():
     print(table_ratio(data, shape))
     print("\n### Control-loop budget: update_kinematics + rnea\n")
     print(table_control_budget(data, shape))
-    print("\n### Heap traffic as a share of algorithm cost\n")
-    print(table_heap_share(data, shape))
+    print("\n### Forward vs inverse dynamics (Arm)\n")
+    print(table_fd_vs_id(data, shape))
 
     if "host" in {k[0] for k in data}:
         print("\n### Host reference -- microseconds per call\n")
