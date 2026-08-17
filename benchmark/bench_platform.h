@@ -37,6 +37,26 @@
   #endif
   #define BENCH_BOARD "Raspberry Pi Pico 2 (RP2350)"
 
+/*
+ * Porting to another MCU -- an STM32G4, say -- needs exactly two things: a
+ * microsecond counter and the core clock. On a G4 that is a free-running 32-bit
+ * timer (or DWT->CYCCNT divided by the clock):
+ *
+ *   #elif defined(BENCH_STM32)
+ *     static inline uint64_t bench_time_us(void) { return __HAL_TIM_GET_COUNTER(&htim2); }
+ *     static inline uint32_t bench_clk_hz(void)  { return HAL_RCC_GetSysClockFreq(); }
+ *     #define BENCH_ARCH   "Arm (Cortex-M4F)"
+ *     #define BENCH_ARCH_SHORT "stm32g4"
+ *     #define BENCH_BOARD  "STM32G4"
+ *
+ * bench_main.c needs no changes. Report the results over whatever stdio the
+ * board has; tools/report.py keys off the arch column, so a new architecture
+ * appears as its own set of tables automatically.
+ *
+ * Note the G4 has a single-precision FPU like the M33, so the numbers should be
+ * broadly comparable per clock -- unlike the RP2350's RISC-V cores.
+ */
+
 #else /* host build */
   #include <time.h>
 

@@ -3,8 +3,8 @@
 Measures every algorithm in the library across four robot platforms, on a host
 PC and on both CPU architectures of a Raspberry Pi Pico 2 (RP2350).
 
-Results and analysis: [`docs/PROFILING.md`](../docs/PROFILING.md).
-Raw CSV: [`results/`](results/).
+Raw CSV: [`results/`](results/). Summary tables: the top-level
+[README](../README.md).
 
 ## Layout
 
@@ -73,7 +73,7 @@ python3 ../tools/capture.py build-riscv/rd_benchmark.uf2 results/rp2350_riscv.cs
 CDC device to re-enumerate and scrapes the CSV. The board does not need to be
 put into BOOTSEL by hand after the first flash.
 
-To regenerate the tables in `docs/PROFILING.md`:
+To regenerate the tables in the top-level README:
 
 ```bash
 python3 tools/report.py benchmark/results/*.csv

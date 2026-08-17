@@ -85,9 +85,9 @@ random configurations, in both precisions:
 | `float32` | 1.9e-06 (float32 eps is 1.19e-07) |
 
 Across a fixed-base arm, a floating-base serial chain and a floating-base
-branched quadruped. The error does not grow with model size. Details, the
-convention mapping between the two libraries, and the bugs this caught are in
-[`docs/VALIDATION.md`](docs/VALIDATION.md).
+branched quadruped, comparing FK, spatial velocity, RNEA, ABA, gravity,
+nonlinear terms, CRBA, both Jacobians and spatial acceleration. The error does
+not grow with model size. Reproduce with `tools/validate.py`.
 
 ## Performance
 
@@ -126,18 +126,31 @@ slower there (median 9.8x). An integer-only control measurement in the same benc
 RISC-V slightly *ahead* of Arm, which pins the difference entirely on floating
 point rather than on the core.
 
-Four rounds of structural optimisation across v0.3.0 and v0.4.0 took CRBA down
-2.16x, ABA 1.87x, RNEA 1.37x and `update_kinematics` 1.44x on Go2, with
-Pinocchio agreement unchanged at machine precision throughout. A Go2
-operational-space tick went from 1.1 kHz to 1.9 kHz.
+Measured with `benchmark/`, which runs the same suite on a host and on both
+RP2350 architectures; raw CSV is in
+[`benchmark/results/`](benchmark/results/) and `tools/report.py` regenerates
+these tables from it.
 
-The instructive part: the code turned out to be **memory-bound, not
-multiply-bound**. Two rounds of reducing multiply counts left RNEA at exactly
-1.00x; one round of reducing *loads* moved it 27%.
+## Conventions
 
-Full methodology, per-architecture tables, a host reference, the optimisation
-history and what is still on the table are in
-[`docs/PROFILING.md`](docs/PROFILING.md).
+Get these backwards and nothing errors — you just get a wrong robot.
+
+| | This library |
+|---|---|
+| Base quaternion | `q_base = [x y z qw qx qy qz]` — **scalar first**; Pinocchio and ROS are scalar-last |
+| Base twist / acceleration | expressed in the root link's **body frame**, not world |
+| Spatial vectors | `[linear, angular]` |
+| `q_joints` | length `nj` |
+| `qd`, `qdd`, `tau` | length **`nv`**, packed, base in the first six elements |
+| `M` | `nv × nv`, fully filled (Pinocchio fills only the upper triangle) |
+| Joint order | depth-first in URDF joint-declaration order — identical to Pinocchio and bard |
+
+Because the joint ordering and the velocity-space layout match Pinocchio, `qd`,
+`qdd` and `tau` vectors pass between the two libraries unchanged. The quaternion
+does not.
+
+`rd_gravity()` returns `g(q)`; `rd_nonlinear_terms()` returns `C(q,q̇)q̇ + g(q)`.
+They are different functions.
 
 ## Building
 
@@ -204,6 +217,11 @@ python3 tools/validate.py  --urdf-root /path/to/bard --double
 The Pinocchio-backed tests skip themselves cleanly when `pinocchio` is not
 installed, so the first two work anywhere.
 
+`validate.py` covers FK, spatial velocity, RNEA, ABA, gravity, nonlinear terms,
+CRBA, both Jacobians and spatial acceleration. Self-consistency checks alone are
+not sufficient for changes to the maths — a wrong mass matrix can still be
+symmetric and positive definite.
+
 ## Licence
 
 [Apache License 2.0](LICENSE). Free for any use, commercial included: you can
@@ -231,9 +249,8 @@ RobotDynamics/       the library
   rd_math.h          spatial algebra, inlined
   rd_config.h        precision, platform detection, size bounds
   spine_model.h      built-in example model
-benchmark/           performance suite (host + RP2350)
-docs/PROFILING.md    measured performance and analysis
-docs/VALIDATION.md   Pinocchio cross-check, conventions, coverage
+benchmark/           performance suite (host + RP2350) and captured results
+.claude/skills/      agent skill: conventions, API, how to verify a change
 LICENSE / NOTICE     Apache 2.0
 tools/
   urdf2c.py          URDF -> rd_model_t header
@@ -241,6 +258,6 @@ tools/
   validate.py        Pinocchio cross-check driver
   validate_dump.c    dumps library results for that comparison
   capture.py         flash an RP2350 and scrape its CSV report
-  report.py          CSV -> the tables in docs/PROFILING.md
+  report.py          CSV -> the tables in this README
 test_main.c          smoke test
 ```
