@@ -50,6 +50,9 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
     size_t off = 0;
 
     state->n_nodes = n;
+    /* Nothing is cached yet, and an uninitialised value here that happened to
+     * match a chain pointer would silently skip computing every transform. */
+    state->cached_for = NULL;
 
     state->T_parent_to_child = buf + off; off += (size_t)n * 16;
     state->Ti                = buf + off; off += (size_t)n * 16;
@@ -80,38 +83,64 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
     const rd_int_t n = chain->n_nodes;
     const rd_int_t base_dof = chain->has_floating_base ? 6 : 0;
 
+    /* Most of what this loop computes does not depend on the configuration at
+     * all. The motion subspace S is a function of the joint axis and the link
+     * offset, so it is fixed once the chain is built -- for every node, moving
+     * or not. And for a node whose joint cannot move, so are T_parent_to_child
+     * and its inverse: two 4x4 SE3 composes and an inverse per tick, arriving
+     * at the same numbers forever. That is not a rare case. A robot's fixture
+     * links -- feet, sensor mounts, inertial frames -- are all fixed joints,
+     * and Go2 has 18 of them out of 30 nodes.
+     *
+     * So compute them once per (chain, state) pairing. Keyed on the chain
+     * rather than latched, so that driving two models through one state buffer
+     * recomputes instead of quietly reading the other robot's transforms. A
+     * chain mutated after it is built would go stale, but rd_chain_build is a
+     * one-time call and nothing in the API invites that. */
+    const int cached = (state->cached_for == (const void*)chain);
+
     for (rd_int_t ti = 0; ti < n; ++ti) {
         rd_idx_t node   = chain->topo_order[ti];
         rd_idx_t parent = chain->parent_list[node];
         rd_idx_t jidx   = chain->joint_idx[node];
         rd_int_t jtype  = chain->joint_type[node];
 
+        const int root_fb  = (parent == -1 && chain->has_floating_base);
+        const int actuated = (jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
+                                             jtype == RD_JOINT_PRISMATIC);
+        /* Nothing the configuration carries can move this node in its parent. */
+        const int immovable = !root_fb && !actuated;
+
+        rd_real_t* T_pc = &state->T_parent_to_child[node*16];
+        rd_real_t* Ti   = &state->Ti[node*16];
+        rd_real_t* S_i  = &state->S[node*6];
+
         /* 1. Transform from the parent link to this one */
-        rd_real_t Ttmp[16], T_pc[16];
-        if (parent == -1 && chain->has_floating_base) {
-            /* The root's "joint" is the 6-DOF base pose. It composes ahead of
-             * the link's own offsets, which is the order rd_fk_frame() uses
-             * when it seeds its accumulator with the base transform. */
-            rd_real_t T_base[16];
-            state_base_transform(q_base, T_base);
-            rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], Ttmp);
-            rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
-        } else {
-            rd_real_t T_motion[16];
-            if (jidx >= 0 && q_joints) {
+        if (!immovable || !cached) {
+            rd_real_t Ttmp[16];
+            if (root_fb) {
+                /* The root's "joint" is the 6-DOF base pose. It composes ahead
+                 * of the link's own offsets, which is the order rd_fk_frame()
+                 * uses when it seeds its accumulator with the base transform. */
+                rd_real_t T_base[16];
+                state_base_transform(q_base, T_base);
+                rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], Ttmp);
+                rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
+            } else if (actuated && q_joints) {
+                rd_real_t T_motion[16];
                 state_motion_transform(jtype, &chain->axes[jidx*3],
                                        q_joints[jidx], T_motion);
+                rd_mat4_mul_se3(&chain->T_joint_offset[node*16], T_motion, Ttmp);
+                rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
             } else {
-                rd_mat4_identity(T_motion);
+                /* The joint contributes identity -- because it is fixed, or
+                 * because no configuration was supplied. Composing against it
+                 * costs 36 multiplies to copy the other two offsets through. */
+                rd_mat4_mul_se3(&chain->T_joint_offset[node*16],
+                                &chain->T_link_offset[node*16], T_pc);
             }
-            rd_mat4_mul_se3(&chain->T_joint_offset[node*16], T_motion, Ttmp);
-            rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
+            rd_mat4_inv(T_pc, Ti);
         }
-
-        memcpy(&state->T_parent_to_child[node*16], T_pc, 16*sizeof(rd_real_t));
-
-        rd_real_t* Ti = &state->Ti[node*16];
-        rd_mat4_inv(T_pc, Ti);
 
         /* 2. Pose in the world */
         rd_real_t* Tw = &state->T_world[node*16];
@@ -123,24 +152,24 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
             rd_mat4_mul_se3(&state->T_world[parent*16], T_pc, Tw);
         }
 
-        /* 3. Joint motion subspace */
-        rd_real_t* S_i = &state->S[node*6];
-        rd_int_t actuated = (jtype == RD_JOINT_REVOLUTE || jtype == RD_JOINT_PRISMATIC);
-        rd_real_t v_joint = RD_REAL(0.0);
-
-        if (actuated && jidx >= 0) {
-            const rd_real_t* axis = &chain->axes[jidx*3];
-            rd_real_t twist[6] = {0};
-            if (jtype == RD_JOINT_REVOLUTE) {
-                twist[3] = axis[0]; twist[4] = axis[1]; twist[5] = axis[2];
+        /* 3. Joint motion subspace -- axis and link offset only, so it is the
+         *    same on every tick. Only the joint's velocity is per-tick. */
+        if (!cached) {
+            if (actuated) {
+                const rd_real_t* axis = &chain->axes[jidx*3];
+                rd_real_t twist[6] = {0};
+                if (jtype == RD_JOINT_REVOLUTE) {
+                    twist[3] = axis[0]; twist[4] = axis[1]; twist[5] = axis[2];
+                } else {
+                    twist[0] = axis[0]; twist[1] = axis[1]; twist[2] = axis[2];
+                }
+                rd_spatial_transform_motion(&chain->T_link_offset[node*16],
+                                            twist, S_i);
             } else {
-                twist[0] = axis[0]; twist[1] = axis[1]; twist[2] = axis[2];
+                memset(S_i, 0, 6*sizeof(rd_real_t));
             }
-            rd_spatial_transform_motion(&chain->T_link_offset[node*16], twist, S_i);
-            if (qd) v_joint = qd[base_dof + jidx];
-        } else {
-            memset(S_i, 0, 6*sizeof(rd_real_t));
         }
+        rd_real_t v_joint = (actuated && qd) ? qd[base_dof + jidx] : RD_REAL(0.0);
         state->vj[node] = v_joint;
 
         /* 4. Spatial velocity, in this link's body frame */
@@ -152,10 +181,17 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 memset(v_i, 0, 6*sizeof(rd_real_t));
             }
         } else {
-            rd_real_t v_parent[6];
-            rd_spatial_transform_motion(Ti, &state->v[parent*6], v_parent);
-            for (int k = 0; k < 6; ++k) v_i[k] = v_parent[k] + S_i[k] * v_joint;
+            /* node != parent, so this may land straight in v_i. */
+            rd_spatial_transform_motion(Ti, &state->v[parent*6], v_i);
+            /* S is zero on an immovable node; branch on the structure rather
+             * than on qd being zero, so a robot at rest is not timed as if it
+             * were faster than one in motion. */
+            if (actuated) {
+                for (int k = 0; k < 6; ++k) v_i[k] += S_i[k] * v_joint;
+            }
         }
     }
+
+    state->cached_for = (const void*)chain;
     return RD_OK;
 }

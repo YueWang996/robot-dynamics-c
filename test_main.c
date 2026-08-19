@@ -236,6 +236,48 @@ int main(void) {
     print_vec("v_world", v, 6);
     printf("\n");
 
+    /* ---- Cold state and warm state must agree ---------------------------
+     * rd_update_kinematics caches everything the configuration cannot change:
+     * S for every node, and T_parent_to_child and its inverse for immovable
+     * ones. That is a real speed-up and a real hazard -- if anything cached
+     * turned out to depend on q after all, only the *second* call onwards
+     * would be wrong, which no single-shot test would ever catch. So drive a
+     * fresh state and an already-used one to the same configuration and
+     * require the entire state buffer to come out bit-identical. */
+    printf("--- Cache invariance (cold state vs warm state) ---\n");
+    {
+        static rd_real_t cold_buf[RD_STATE_BUF_FLOATS(RD_MAX_LINKS)];
+        rd_state_t cold;
+        rd_state_init(&cold, chain.n_nodes, cold_buf, sizeof(cold_buf));
+
+        /* `state` is warm: it has been driven all through the tests above. */
+        rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
+        rd_update_kinematics(&chain, &cold,  q_base, q_joints, qd);
+
+        /* Only the kinematics block: T_parent_to_child, Ti, T_world, v, S and
+         * vj, laid out in that order by rd_state_init. Past it is scratch that
+         * the algorithms above have written in `state` and never in `cold`. */
+        size_t floats = (size_t)chain.n_nodes * (16 + 16 + 16 + 6 + 6 + 1);
+        int differing = 0;
+        for (size_t i = 0; i < floats; ++i) {
+            if (state_buf[i] != cold_buf[i]) differing++;
+        }
+        printf("state floats compared = %zu, differing = %d\n", floats, differing);
+        check(differing == 0, "warm state matches a cold one bit for bit");
+
+        /* And again at a different configuration, so the check is not just
+         * "the cache happened to hold the values from this very call". */
+        for (rd_int_t i = 0; i < chain.n_joints; ++i) q_joints[i] += RD_REAL(0.37);
+        rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
+        rd_update_kinematics(&chain, &cold,  q_base, q_joints, qd);
+        differing = 0;
+        for (size_t i = 0; i < floats; ++i) {
+            if (state_buf[i] != cold_buf[i]) differing++;
+        }
+        check(differing == 0, "and still matches after the configuration moves");
+    }
+    printf("\n");
+
     rd_chain_free(&chain);
 
     printf("=== %s (%d failure%s) ===\n",

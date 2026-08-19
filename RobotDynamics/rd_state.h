@@ -76,6 +76,11 @@ typedef struct {
     rd_real_t* u;                 /**< n,    ABA */
 
     rd_int_t n_nodes;
+
+    /** Chain whose immovable quantities are already cached in this state, or
+     *  NULL. See rd_update_kinematics(); reusing one state with a different
+     *  chain simply recomputes them. */
+    const void* cached_for;
 } rd_state_t;
 
 /* ============================================================================

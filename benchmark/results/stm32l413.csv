@@ -7,50 +7,51 @@
 # compiler=15.2.1 20251203
 # repeats=5 target_us=50000 (minimum of 5 timed loops)
 # ram=64 KB contiguous at 0x20000000 (SRAM1 48K + SRAM2 16K mirrored above it)
-# cross-check=cycles/call within 0.96-1.00x of the STM32G474 at the same wait
-#   states, and a 16 MHz zero-wait-state run of the same image gives
-#   4.50x median wall-clock speed-up against the 5.00x clock ratio
+# build=defaults; RD_FAST_TRIG off
+# note=includes the configuration-independent traversal caching. The RP2350 and
+#   STM32G474 results in this directory predate it and are stale for
+#   update_kinematics; they have not been re-measured.
 arch,robot,algorithm,n_links,n_joints,nv,ns_per_call,cycles_per_call,iters
-stm32l4,simple_arm,update_kinematics,3,2,2,51750.0,4140,1024
+stm32l4,simple_arm,update_kinematics,3,2,2,39412.6,3153,2048
 stm32l4,simple_arm,fk_frame,3,2,2,33875.0,2710,2048
 stm32l4,simple_arm,jacobian_world,3,2,2,9912.5,793,8192
 stm32l4,simple_arm,jacobian_local,3,2,2,14962.6,1197,4096
-stm32l4,simple_arm,rnea,3,2,2,33674.8,2694,2048
+stm32l4,simple_arm,rnea,3,2,2,33675.3,2694,2048
 stm32l4,simple_arm,aba,3,2,2,,,unsupported(-5)
 stm32l4,simple_arm,crba,3,2,2,77675.8,6214,1024
 stm32l4,simple_arm,gravity_comp,3,2,2,24750.0,1980,2048
 stm32l4,simple_arm,spatial_accel,3,2,2,14937.5,1195,4096
 stm32l4,simple_arm,spatial_velocity,3,2,2,2237.5,179,32768
 stm32l4,simple_arm,_heap_probe,3,2,2,20562.5,1645,4096
-stm32l4,spine,update_kinematics,4,3,9,72062.5,5765,1024
+stm32l4,spine,update_kinematics,4,3,9,63112.3,5049,1024
 stm32l4,spine,fk_frame,4,3,9,40037.6,3203,2048
-stm32l4,spine,jacobian_world,4,3,9,36087.4,2887,2048
+stm32l4,spine,jacobian_world,4,3,9,36087.9,2887,2048
 stm32l4,spine,jacobian_local,4,3,9,47575.2,3806,2048
 stm32l4,spine,rnea,4,3,9,45825.2,3666,2048
 stm32l4,spine,aba,4,3,9,200523.4,16042,256
 stm32l4,spine,crba,4,3,9,141574.2,11326,512
 stm32l4,spine,gravity_comp,4,3,9,33825.2,2706,2048
-stm32l4,spine,spatial_accel,4,3,9,18337.6,1467,4096
+stm32l4,spine,spatial_accel,4,3,9,18337.4,1467,4096
 stm32l4,spine,spatial_velocity,4,3,9,2237.5,179,32768
 stm32l4,spine,_heap_probe,4,3,9,25550.3,2044,2048
-stm32l4,xarm7,update_kinematics,10,7,7,177113.3,14169,512
+stm32l4,xarm7,update_kinematics,10,7,7,137013.7,10961,512
 stm32l4,xarm7,fk_frame,10,7,7,96762.7,7741,1024
 stm32l4,xarm7,jacobian_world,10,7,7,29549.8,2364,2048
 stm32l4,xarm7,jacobian_local,10,7,7,39550.3,3164,2048
 stm32l4,xarm7,rnea,10,7,7,95700.2,7656,1024
 stm32l4,xarm7,aba,10,7,7,438140.6,35051,128
-stm32l4,xarm7,crba,10,7,7,330453.1,26436,256
+stm32l4,xarm7,crba,10,7,7,330449.2,26436,256
 stm32l4,xarm7,gravity_comp,10,7,7,68187.5,5455,1024
-stm32l4,xarm7,spatial_accel,10,7,7,37337.9,2987,2048
+stm32l4,xarm7,spatial_accel,10,7,7,37337.4,2987,2048
 stm32l4,xarm7,spatial_velocity,10,7,7,2237.5,179,32768
 stm32l4,xarm7,_heap_probe,10,7,7,49961.9,3997,1024
-stm32l4,go2,update_kinematics,31,12,18,489539.1,39163,128
+stm32l4,go2,update_kinematics,31,12,18,296390.6,23711,256
 stm32l4,go2,fk_frame,31,12,18,43725.1,3498,2048
 stm32l4,go2,jacobian_world,31,12,18,55087.9,4407,1024
 stm32l4,go2,jacobian_local,31,12,18,75875.0,6070,1024
 stm32l4,go2,rnea,31,12,18,270675.8,21654,256
 stm32l4,go2,aba,31,12,18,1299500.0,103960,64
-stm32l4,go2,crba,31,12,18,971500.0,77720,64
+stm32l4,go2,crba,31,12,18,971484.4,77719,64
 stm32l4,go2,gravity_comp,31,12,18,189511.7,15161,512
 stm32l4,go2,spatial_accel,31,12,18,103275.4,8262,512
 stm32l4,go2,spatial_velocity,31,12,18,2237.5,179,32768

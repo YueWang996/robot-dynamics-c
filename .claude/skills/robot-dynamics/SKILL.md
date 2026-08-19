@@ -175,23 +175,35 @@ operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 361 µs
 (2.8 kHz) for torque and 821 µs (1.2 kHz) for operational space — the M4F needs
 1.1–2.2× the M33's cycles for this workload, and running from flash costs
-another ~17%. An **STM32L413 at 80 MHz** gives 760 µs (1.3 kHz) and 1732 µs
-(577 Hz). The two M4F parts agree within 4% on cycles per call, so **scale any
-other Cortex-M4F from these by clock** and expect to be close.
+another ~17%. An **STM32L413 at 80 MHz**, on current code, gives 567 µs
+(1.8 kHz) for torque. The two M4F parts agree within 4% on cycles per call, so
+**scale any other Cortex-M4F from these by clock** and expect to be close.
 
 Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
 with path depth only (~3 µs per level — much cheaper than a full update if you
 need one frame), `aba` at ~13 µs per link.
 
-**Where the time actually goes.** `update_kinematics` is the only routine that
-calls libm, one sin/cos pair per revolute joint, and that is worth about 9% of
-it — `RD_FAST_TRIG=1` buys 5–6% on a torque tick and moves `rnea`, `crba` and
-`aba` not at all, since they only read the cache it built. `update_kinematics`
-is also the routine that suffers most from flash wait states (~50% on
-Cortex-M4F, against 2% for `rnea`), but that is its code footprint missing in
-the instruction cache, not the libm calls — removing them recovers only ~13% of
-the penalty. Reach for `rd_fk_frame` when one frame is all you need, and do not
-expect trig work to speed up the dynamics.
+**The RP2350 and STM32G474 numbers above are stale.** They predate the
+traversal caching and are pessimistic on `update_kinematics` by up to ~40%; only
+the STM32L413 has been re-measured. Say so rather than quoting them as current.
+
+**Where the time actually goes.** `update_kinematics` dominates a tick and
+everything else reads the cache it builds, so `rnea`, `crba`, `aba`, `fk_frame`
+and the Jacobians are unaffected by anything done to it. Two facts follow:
+
+- **Fixed joints are most of a real robot.** Feet, sensor mounts and inertial
+  frames are all fixed nodes — Go2 is 18 of 30 — and their transforms are chain
+  constants. The library caches them per (chain, state) pairing, worth −39.5% on
+  Go2's `update_kinematics`. If a user reports it recomputing every tick, check
+  they are not re-initialising the state each loop: that throws the cache away.
+- **libm is worth ~9% of it**, no more. `RD_FAST_TRIG=1` buys 5–6% of a tick.
+  Flash wait states cost `update_kinematics` ~50% on Cortex-M4F against 2% for
+  `rnea`, but that is code footprint missing in the instruction cache, not the
+  libm calls — removing them recovers only ~13% of the penalty.
+
+Do not suggest `-O2`/`-Os` to shrink the code for the instruction cache (costs
+38%/54%) or linking to RAM (slower than flash on Cortex-M4 — SRAM goes over the
+system bus and loses the Harvard split). Both were measured.
 
 **On an RP2350, run dynamics on the Arm cores.** The RISC-V cores have no FPU,
 so everything here is 4–13× slower on them. That is a deployment decision, not

@@ -91,6 +91,14 @@ not grow with model size. Reproduce with `tools/validate.py`.
 
 ## Performance
 
+> **Which build these are from.** The STM32L413 figures are current. The RP2350
+> and STM32G474 figures were taken before the traversal caching described under
+> [Where the time goes](#where-the-time-goes), so their `update_kinematics` --
+> and therefore their control-loop budgets -- are pessimistic by up to ~40%.
+> Neither board is currently connected, and re-measuring is the only honest way
+> to update them. The saving is structural rather than a tuning trick, so it
+> should carry across, but that is an expectation and not a measurement.
+
 Microseconds per call, single precision, `-O3`, each part at its rated clock.
 Columns: Raspberry Pi Pico 2 (RP2350) Cortex-M33 at 150 MHz, and an STM32G474
 Cortex-M4F at 170 MHz. Four cores measured in total — see
@@ -211,6 +219,44 @@ target_link_libraries(my_firmware PRIVATE robot_dynamics)
 
 `RD_MAX_LINKS` (16) and `RD_MAX_JOINTS` (12) bound the static model storage and
 can be raised with a compile definition. Go2 needs at least 31 links.
+
+### Where the time goes
+
+`update_kinematics` dominates a control tick, and most of what it was computing
+never changed. The motion subspace `S` is a function of the joint axis and the
+link offset, so it is fixed the moment the chain is built — for every node. And
+for a node whose joint cannot move, so are `T_parent_to_child` and its inverse:
+two 4x4 SE3 composes and a matrix inverse per tick, arriving at the same numbers
+forever.
+
+That is not a corner case. A robot's fixture links — feet, sensor mounts,
+inertial frames — are all fixed joints, and **Go2 is 18 fixed nodes out of 30**.
+Computing these once per (chain, state) pairing, measured on the L413 at 80 MHz:
+
+| | `update_kinematics` | torque tick | |
+|---|---|---|---|
+| spine (0 of 3 nodes fixed) | −12.4% | 118 → 109 µs | 8.5 → 9.2 kHz |
+| xarm7 (3 of 10) | −22.6% | 273 → 233 µs | 3.7 → 4.3 kHz |
+| go2 (18 of 30) | **−39.5%** | **760 → 567 µs** | **1.3 → 1.8 kHz** |
+
+`rnea`, `crba`, `aba`, `fk_frame` and the Jacobians do not move at all — they
+read the cache rather than build it. Spine has no fixed joints and still gains
+12%, which is the `S` caching alone. With `RD_FAST_TRIG=1` on top, Go2's tick
+reaches 545 µs (1.84 kHz), 28% below where it started.
+
+The cache is keyed on the chain pointer, so driving two models through one state
+buffer recomputes rather than quietly reading the other robot's transforms, and
+`rd_test` checks that a warm state and a cold one produce bit-identical
+kinematics at two different configurations. That check matters more than most:
+if anything cached did turn out to depend on `q`, only the *second* call onwards
+would be wrong, which no single-shot test would catch.
+
+Two things that did **not** work, for the record. Shrinking the code to fit the
+L4's 1 KB instruction cache — `rd_update_kinematics` compiles to 6.5 KB at
+`-O3`, so every node re-fetches it — makes things much worse, because `-O3`'s
+inlining is worth more than the fetch stalls it causes: `-O2` costs 38% and
+`-Os` 54%. And running from RAM is slower than flash on Cortex-M4, because SRAM
+at `0x20000000` goes over the system bus and gives up the Harvard split.
 
 ### Trigonometry
 

@@ -40,6 +40,7 @@ benchmark/stm32l4/link_bench.ld
 benchmark/stm32l4/link_probe.ld
 benchmark/stm32l4/link_trig.ld
 benchmark/stm32l4/out.bin
+benchmark/stm32l4/*.csv
 
 # Toolchain / venv
 venv/

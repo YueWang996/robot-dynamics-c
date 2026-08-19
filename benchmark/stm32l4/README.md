@@ -125,6 +125,22 @@ newlib's `sincosf` is slower than calling both, because it is literally
 costs the same at both wait-state settings: no table, no branches, small enough
 to stay in cache.
 
+## Re-measuring after a library change
+
+`make run-bench PLL80=1` is the shipped configuration and what
+[`../results/stm32l413.csv`](../results/stm32l413.csv) holds. Two variations are
+worth knowing:
+
+```bash
+make run-bench                          # 16 MHz, zero wait states
+make run-bench PLL80=1 EXTRA=-DRD_FAST_TRIG=1
+```
+
+`EXTRA` appends to `CFLAGS`, and a later `-O` wins over the default `-O3`, so
+`EXTRA=-O2` also works for checking an optimisation-level question — the answer
+turned out to be that `-O2` costs 38% and `-Os` 54%, because `-O3`'s inlining is
+worth more than the instruction-cache misses it causes.
+
 ## Notes
 
 - `ramcheck.py` fails the build if data + bss + heap + stack exceeds the part.
