@@ -54,14 +54,57 @@ extern "C" {
     static RD_INLINE rd_real_t rd_atan2(rd_real_t y, rd_real_t x) { return atan2(y, x); }
 #endif
 
+/* One angle, both functions. Measured on an STM32L413 (Cortex-M4F, 80 MHz,
+ * 4 wait states), cycles for one (sin, cos) pair and worst-case absolute error
+ * against double-precision libm over [-pi, pi]:
+ *
+ *     sinf + cosf        273.6 cyc    5.9e-08     <- default
+ *     sincosf (newlib)   313.4 cyc    5.9e-08     slower: it is literally
+ *                                                 "bl sinf; bl cosf" plus
+ *                                                 stack shuffling, not fused
+ *     arm_sin/cos_f32    105.5 cyc    1.9e-05     512-entry table, 2 KB flash
+ *     RD_FAST_TRIG=1      57.3 cyc    6.6e-08
+ *
+ * So sincosf is not worth reaching for, and CMSIS-DSP's table buys less speed
+ * than the polynomial while costing 285x the error -- it interpolates linearly
+ * between table entries, which float32 can resolve. RD_FAST_TRIG is off by
+ * default anyway: the shipped numbers are the ones validated against Pinocchio,
+ * and a build option that changes results should be opted into deliberately. */
+#if RD_FAST_TRIG && RD_REAL_IS_FLOAT
+/* Cody-Waite reduction onto [-pi/4, pi/4] plus a quadrant, then Taylor series
+ * carried far enough that the truncation error sits under a float32 ULP. Joint
+ * angles are bounded, so none of libm's Payne-Hanek machinery for huge
+ * arguments is needed -- but a continuous joint can integrate without limit, so
+ * anything outside the range the two-term pi/2 split can hold goes to libm. */
 static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
-#if defined(__GNUC__) && defined(_GNU_SOURCE)
-    sincosf(x, s, c);
+    if (rd_fabs(x) > 4096.0f) { *s = rd_sin(x); *c = rd_cos(x); return; }
+
+    const float MAGIC = 12582912.0f;                /* 2^23 + 2^22 */
+    float fn = (x * 0.636619772f + MAGIC) - MAGIC;  /* n = round(x * 2/pi) */
+    int   n  = (int)fn;
+    float r  = x - fn * 1.5707962513e+00f;          /* pi/2, high part */
+    r        =   r - fn * 7.5497894159e-08f;        /* pi/2, low part  */
+
+    float r2 = r * r;
+    float sr = r * (1.0f + r2 * (-1.6666667e-01f + r2 * ( 8.3333337e-03f
+                     + r2 * (-1.9841270e-04f + r2 * ( 2.7557319e-06f)))));
+    float cr = 1.0f + r2 * (-5.0000000e-01f + r2 * ( 4.1666668e-02f
+                     + r2 * (-1.3888889e-03f + r2 * ( 2.4801587e-05f))));
+
+    switch (n & 3) {
+        case 0:  *s =  sr; *c =  cr; break;
+        case 1:  *s =  cr; *c = -sr; break;
+        case 2:  *s = -sr; *c = -cr; break;
+        default: *s = -cr; *c =  sr; break;
+    }
+}
 #else
+static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
+    /* Not sincosf: see the table above -- newlib's is slower than both calls. */
     *s = rd_sin(x);
     *c = rd_cos(x);
-#endif
 }
+#endif
 
 /* ============================================================================
  * 2. 3x3 Matrix Operations (Rotation & Vector)

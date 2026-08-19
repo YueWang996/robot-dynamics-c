@@ -183,6 +183,16 @@ Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
 with path depth only (~3 µs per level — much cheaper than a full update if you
 need one frame), `aba` at ~13 µs per link.
 
+**Where the time actually goes.** `update_kinematics` is the only routine that
+calls libm, one sin/cos pair per revolute joint, and that is worth about 9% of
+it — `RD_FAST_TRIG=1` buys 5–6% on a torque tick and moves `rnea`, `crba` and
+`aba` not at all, since they only read the cache it built. `update_kinematics`
+is also the routine that suffers most from flash wait states (~50% on
+Cortex-M4F, against 2% for `rnea`), but that is its code footprint missing in
+the instruction cache, not the libm calls — removing them recovers only ~13% of
+the penalty. Reach for `rd_fk_frame` when one frame is all you need, and do not
+expect trig work to speed up the dynamics.
+
 **On an RP2350, run dynamics on the Arm cores.** The RISC-V cores have no FPU,
 so everything here is 4–13× slower on them. That is a deployment decision, not
 a code change.
@@ -203,7 +213,8 @@ a code change.
 | Option | Default | |
 |---|---|---|
 | `RD_SINGLE_PRECISION` | ON | `float` vs `double` for `rd_real_t` |
-| `RD_CMSIS_DSP` | OFF | needs `RD_CMSIS_DSP_INCLUDE_DIR` |
+| `RD_CMSIS_DSP` | OFF | needs `RD_CMSIS_DSP_INCLUDE_DIR`. Do not use it for trig — its table lookup is slower *and* 285x less accurate than `RD_FAST_TRIG` |
+| `RD_FAST_TRIG` | OFF | polynomial `sin`/`cos`, 4.8x faster than libm at the same float32 accuracy. Passes the Pinocchio comparison; validate with `--cflag=-DRD_FAST_TRIG=1` |
 | `RD_STATIC_ALLOC` | OFF | see constraints |
 | `RD_OPTIMIZE_SIZE` | OFF | `-Os` vs `-O3 -ffast-math` |
 

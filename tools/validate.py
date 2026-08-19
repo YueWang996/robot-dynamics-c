@@ -43,10 +43,13 @@ ROBOTS = {
 }
 
 
-def build(double: bool) -> str:
-    out = os.path.join(tempfile.gettempdir(), f"rd_validate_{'f64' if double else 'f32'}")
+def build(double: bool, extra: list | None = None) -> str:
+    tag = ("f64" if double else "f32") + ("_" + "_".join(
+        e.lstrip("-D").replace("=", "") for e in extra) if extra else "")
+    out = os.path.join(tempfile.gettempdir(), f"rd_validate_{tag}")
     cmd = [
         "cc", "-O2", "-std=c11", "-g",
+        *(extra or []),
         f"-DRD_USE_SINGLE_PRECISION={0 if double else 1}",
         "-DRD_MAX_LINKS=40", "-DRD_MAX_JOINTS=24",
         "-I", os.path.join(ROOT, "RobotDynamics"),
@@ -160,9 +163,11 @@ def main():
     ap.add_argument("-n", "--samples", type=int, default=20)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--tol", type=float, default=None)
+    ap.add_argument("--cflag", action="append", default=[],
+                    help="extra -D for the C build, e.g. --cflag=-DRD_FAST_TRIG=1")
     args = ap.parse_args()
 
-    binary = build(args.double)
+    binary = build(args.double, args.cflag)
     tol = args.tol if args.tol is not None else (1e-10 if args.double else 3e-5)
     rng = np.random.default_rng(args.seed)
 

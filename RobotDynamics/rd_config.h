@@ -39,6 +39,13 @@ extern "C" {
     #define RD_USE_SINGLE_PRECISION  1
 #endif
 
+/* Polynomial sin/cos instead of libm's. Same accuracy to within a float32 ULP,
+ * about 4.8x faster on Cortex-M4F. Off by default because it changes results,
+ * however slightly, and the shipped numbers are the validated ones. */
+#ifndef RD_FAST_TRIG
+    #define RD_FAST_TRIG  0
+#endif
+
 /* Use ARM CMSIS-DSP library for matrix operations (Default: 0) */
 #ifndef RD_USE_CMSIS_DSP
     #define RD_USE_CMSIS_DSP  0

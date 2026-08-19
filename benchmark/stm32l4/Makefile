@@ -43,6 +43,9 @@ ifeq ($(PLL80),1)
   CFLAGS += -DBENCH_L4_PLL80=1
 endif
 
+# e.g. make run-bench PLL80=1 EXTRA=-DRD_FAST_TRIG=1
+CFLAGS += $(EXTRA)
+
 LDBASE := $(CPU) -Wl,--gc-sections -Wl,--no-warn-rwx-segments -nostartfiles \
           --specs=nano.specs --specs=nosys.specs -lc -lm -u _printf_float
 
@@ -56,6 +59,18 @@ BENCH_DEFS :=
 # lists: probe_main.c confirmed on target that SRAM2 mirrors directly above
 # SRAM1 and that 0x20010000 faults.
 BENCH_RAM  := 64
+
+# Measures what sin/cos costs and what the alternatives buy. CMSIS-DSP comes
+# from the G4 Cube package; --gc-sections drops all of arm_common_tables.c
+# except the one 512-entry table arm_sin_f32 needs.
+DSP        := $(CUBE)/Drivers/CMSIS/DSP
+TRIG_SRCS  := trig_main.c $(COMMON) \
+              $(DSP)/Source/FastMathFunctions/arm_sin_f32.c \
+              $(DSP)/Source/FastMathFunctions/arm_cos_f32.c \
+              $(DSP)/Source/CommonTables/arm_common_tables.c
+TRIG_CFLAGS := -I$(DSP)/Include -DARM_MATH_CM4 -D__FPU_PRESENT=1 -D_GNU_SOURCE \
+               -DARM_DSP_CONFIG_TABLES -DARM_FAST_ALLOW_TABLES -DARM_TABLE_SIN_F32
+TRIG_RAM   := 48
 
 PROBE_SRCS := probe_main.c $(COMMON)
 # 32 leaves 0x20008000 upward free to write test patterns into
@@ -74,6 +89,9 @@ link_bench.ld: link.ld.in Makefile
 link_probe.ld: link.ld.in Makefile
 	$(call LDSCRIPT_RULE,$(PROBE_RAM),$@)
 
+link_trig.ld: link.ld.in Makefile
+	$(call LDSCRIPT_RULE,$(TRIG_RAM),$@)
+
 rd_bench.elf: $(BENCH_SRCS) link_bench.ld
 	$(TC)-gcc $(CFLAGS) $(BENCH_DEFS) $(BENCH_SRCS) $(LDBASE) -T link_bench.ld \
 	    -Wl,-Map=rd_bench.map -o $@
@@ -86,6 +104,11 @@ rd_probe.elf: $(PROBE_SRCS) link_probe.ld
 	@$(TC)-size $@
 	@python3 ramcheck.py $@ $(PROBE_RAM)
 
+rd_trig.elf: $(TRIG_SRCS) link_trig.ld
+	$(TC)-gcc $(CFLAGS) $(TRIG_CFLAGS) $(TRIG_SRCS) $(LDBASE) -T link_trig.ld \
+	    -Wl,-Map=rd_trig.map -o $@
+	@$(TC)-size $@
+
 %.bin: %.elf
 	$(TC)-objcopy -O binary $< $@
 
@@ -95,10 +118,13 @@ run-probe: rd_probe.bin
 run-bench: rd_bench.bin
 	python3 dfu.py run $< $(FLASH_ORIGIN)
 
+run-trig: rd_trig.bin
+	python3 dfu.py run $< $(FLASH_ORIGIN)
+
 read:
 	python3 dfu.py read
 
 clean:
-	rm -f *.elf *.bin *.map link_bench.ld link_probe.ld out.bin
+	rm -f *.elf *.bin *.map link_bench.ld link_probe.ld link_trig.ld out.bin
 
-.PHONY: all run-probe run-bench read clean
+.PHONY: all run-probe run-bench run-trig read clean

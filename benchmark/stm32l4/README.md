@@ -92,10 +92,38 @@ each other's check:
 
 The same image is built for both clocks, so the cycle counts have to agree
 except for flash wait states — and they do, to within 4% of a completely
-separate board. The 4WS cost falls almost entirely on `update_kinematics` and
-`fk_frame`, the only routines that call libm, and the shortfall from a 5.00x
-speed-up is exactly that cost. `make run-bench` without `PLL80=1` reproduces the
-zero-wait-state side of the comparison.
+separate board. The shortfall from a 5.00x speed-up is exactly the wait-state
+cost. `make run-bench` without `PLL80=1` reproduces the zero-wait-state side.
+
+That cost falls almost entirely on `update_kinematics` and `fk_frame`, which
+are also the only two routines calling libm — but the two facts turn out to be
+mostly unrelated. `make run-trig` measures sin/cos directly, and building the
+benchmark with `EXTRA=-DRD_FAST_TRIG=1` removes the libm calls entirely:
+
+| go2 `update_kinematics` | 0 WS | 4 WS | penalty |
+|---|---|---|---|
+| libm | 25,844 | 39,163 | 1.52x |
+| polynomial | 24,424 | 35,954 | 1.47x |
+
+Dropping libm recovers only about 13% of the 13,319-cycle penalty. What
+`update_kinematics` actually has is the largest and most branch-diverse code
+footprint per node, so it misses in the instruction cache far more than
+`rnea`'s tight inner loops, which pay 2%.
+
+`make run-trig` also settles what to use for the trig itself — cycles for one
+(sin, cos) pair, and worst-case error against double-precision libm:
+
+| | 4 WS | 0 WS | max abs error |
+|---|---|---|---|
+| `sinf` + `cosf` | 273.6 | 246.4 | 5.9e-08 |
+| `sincosf` | 313.4 | 280.1 | 5.9e-08 |
+| CMSIS-DSP table | 105.5 | 94.4 | 1.9e-05 |
+| polynomial | 57.3 | 57.3 | 6.6e-08 |
+
+newlib's `sincosf` is slower than calling both, because it is literally
+`bl sinf; bl cosf` plus stack shuffling. The polynomial is the only one that
+costs the same at both wait-state settings: no table, no branches, small enough
+to stay in cache.
 
 ## Notes
 

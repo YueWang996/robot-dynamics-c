@@ -125,8 +125,12 @@ The M4F needs 1.1–2.2× the M33's cycles for identical work even with flash
 stalls removed, and the gap widens on the most data-heavy algorithms — this
 library is memory-bound, so load/store throughput is what separates the two
 cores. Flash wait states cost the G474 about 17% on top of that, concentrated
-almost entirely in `update_kinematics` (~50%), which is the one routine calling
-into libm.
+almost entirely in `update_kinematics` (~50%). That is *not* mainly the libm
+calls, tempting as the correlation is: replacing `sinf`/`cosf` with a
+polynomial removes only about 13% of the wait-state penalty on the L413. What
+`update_kinematics` really has is the largest and most branch-diverse code
+footprint per node, so it misses in the instruction cache more than the tight
+inner loops of `rnea` do — `rnea` pays only 2%.
 
 The two M4F parts agree to **within 4% on cycles per call** (median 0.98×) once
 both are at four wait states, despite being separate boards with independently
@@ -199,13 +203,52 @@ target_link_libraries(my_firmware PRIVATE robot_dynamics)
 | Option | Default | Meaning |
 |---|---|---|
 | `RD_SINGLE_PRECISION` | `ON` | `float` rather than `double` for `rd_real_t` |
-| `RD_CMSIS_DSP` | `OFF` | Use CMSIS-DSP for `sin`/`cos`/`sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR` |
+| `RD_CMSIS_DSP` | `OFF` | Use CMSIS-DSP for `sin`/`cos`/`sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR`. `RD_FAST_TRIG` is both faster and far more accurate — see below |
+| `RD_FAST_TRIG` | `OFF` | Polynomial `sin`/`cos`: 4.8x faster than libm at the same float32 accuracy |
 | `RD_STATIC_ALLOC` | `OFF` | No `malloc` (see limitations) |
 | `RD_OPTIMIZE_SIZE` | `OFF` | `-Os` rather than `-O3 -ffast-math` |
 | `RD_ENABLE_DEBUG` | `OFF` | Assertion and log output |
 
 `RD_MAX_LINKS` (16) and `RD_MAX_JOINTS` (12) bound the static model storage and
 can be raised with a compile definition. Go2 needs at least 31 links.
+
+### Trigonometry
+
+`update_kinematics` needs a sine and a cosine per revolute joint, and on a
+Cortex-M4F libm is not cheap. Measured on an STM32L413 at 80 MHz — cycles for
+one (sin, cos) pair, and worst-case absolute error against double-precision
+libm over `[-pi, pi]`:
+
+| | cycles | max abs error | |
+|---|---|---|---|
+| `sinf` + `cosf` | 273.6 | 5.9e-08 | the default |
+| `sincosf` | 313.4 | 5.9e-08 | **slower** — newlib's is `bl sinf; bl cosf`, not fused |
+| `arm_sin_f32` / `arm_cos_f32` | 105.5 | 1.9e-05 | `RD_CMSIS_DSP`: 512-entry table, 2 KB flash |
+| `RD_FAST_TRIG=1` | 57.3 | 6.6e-08 | Cody-Waite reduction + Taylor series |
+
+CMSIS-DSP interpolates linearly between table entries, which costs four decimal
+digits of accuracy that float32 could otherwise resolve — for two thirds the
+speed-up the polynomial gives. There is no case for using it here.
+
+`RD_FAST_TRIG` is off by default because it changes results, however slightly,
+and the shipped numbers are the validated ones. It passes the same Pinocchio
+comparison at the same tolerances:
+
+```bash
+python3 tools/validate.py --urdf-root /path/to/bard --cflag=-DRD_FAST_TRIG=1
+```
+
+End to end on the L413, turning it on costs nothing and buys:
+
+| | `update_kinematics` | `fk_frame` | `rnea` | torque tick |
+|---|---|---|---|---|
+| xarm7 | −9.6% | −15.8% | ±0% | 273 → 256 µs (−6.2%) |
+| go2 | −8.2% | −10.3% | ±0% | 760 → 720 µs (−5.3%) |
+
+`rnea`, `crba` and `aba` do not move at all — they read the cache
+`update_kinematics` built and never call a transcendental. This is the shape of
+the whole result: trig is worth roughly 9% of one routine, not a rewrite of the
+library.
 
 ## Bringing in a robot
 

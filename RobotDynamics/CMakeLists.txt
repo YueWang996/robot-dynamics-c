@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 # ============================================================================
 option(RD_SINGLE_PRECISION "Use single precision (float)" ON)
 option(RD_CMSIS_DSP "Enable ARM CMSIS-DSP" OFF)
+option(RD_FAST_TRIG "Polynomial sin/cos instead of libm" OFF)
 option(RD_STATIC_ALLOC "Use static memory allocation" OFF)
 option(RD_OPTIMIZE_SIZE "Optimize for size (-Os)" OFF)
 option(RD_ENABLE_DEBUG "Enable debug logging" OFF)
@@ -31,6 +32,10 @@ if(RD_SINGLE_PRECISION)
     target_compile_definitions(robot_dynamics PUBLIC RD_USE_SINGLE_PRECISION=1)
 else()
     target_compile_definitions(robot_dynamics PUBLIC RD_USE_SINGLE_PRECISION=0)
+endif()
+
+if(RD_FAST_TRIG)
+    target_compile_definitions(robot_dynamics PUBLIC RD_FAST_TRIG=1)
 endif()
 
 # CMSIS-DSP Configuration
