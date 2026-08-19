@@ -45,8 +45,12 @@
 #define MAX_ITERS             (1u << 22)
 #define REPEATS               5
 
+#ifndef BENCH_MAX_NODES
 #define BENCH_MAX_NODES       40
+#endif
+#ifndef BENCH_MAX_NV
 #define BENCH_MAX_NV          32
+#endif
 
 /* ========================================================================== */
 /* Work buffers (static: the RP2350 default stack is only 2 KiB)              */
@@ -405,6 +409,8 @@ int bench_run(void) {
 #endif
 }
 
-#ifndef BENCH_STM32G4
+/* The bare-metal ports own main(): they must bring up clocks and stdio before
+ * anything here runs. They define BENCH_NO_MAIN to say so. */
+#ifndef BENCH_NO_MAIN
 int main(void) { return bench_run(); }
 #endif

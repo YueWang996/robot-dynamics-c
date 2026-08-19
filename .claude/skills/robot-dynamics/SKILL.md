@@ -175,7 +175,9 @@ operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 361 µs
 (2.8 kHz) for torque and 821 µs (1.2 kHz) for operational space — the M4F needs
 1.1–2.2× the M33's cycles for this workload, and running from flash costs
-another ~17%. Scale other Cortex-M4F parts from those numbers by clock.
+another ~17%. An **STM32L413 at 80 MHz** gives 760 µs (1.3 kHz) and 1732 µs
+(577 Hz). The two M4F parts agree within 4% on cycles per call, so **scale any
+other Cortex-M4F from these by clock** and expect to be close.
 
 Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
 with path depth only (~3 µs per level — much cheaper than a full update if you

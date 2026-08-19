@@ -175,9 +175,11 @@ def main():
         "arm":     "Arm Cortex-M33 @ 150 MHz (RP2350)",
         "riscv":   "RISC-V Hazard3 @ 150 MHz (RP2350)",
         "stm32g4": "Arm Cortex-M4F @ 170 MHz (STM32G474)",
+        "stm32l4": "Arm Cortex-M4F @ 80 MHz (STM32L413)",
         "host":    "Host reference",
     }
-    present = [a for a in ("arm", "stm32g4", "riscv") if any(k[0] == a for k in data)]
+    present = [a for a in ("arm", "stm32g4", "stm32l4", "riscv")
+               if any(k[0] == a for k in data)]
     for arch in present:
         print(f"### {LABEL.get(arch, arch)} -- microseconds per call\n")
         print(table_per_arch(data, shape, arch))

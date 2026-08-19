@@ -37,8 +37,18 @@
   #endif
   #define BENCH_BOARD "Raspberry Pi Pico 2 (RP2350)"
 
-#elif defined(BENCH_STM32G4)
-  #include "stm32g4xx.h"
+#elif defined(BENCH_STM32G4) || defined(BENCH_STM32L4)
+  #if defined(BENCH_STM32G4)
+    #include "stm32g4xx.h"
+    #define BENCH_ARCH       "Arm (Cortex-M4, ARMv7E-M + FPv4-SP + DSP)"
+    #define BENCH_ARCH_SHORT "stm32g4"
+    #define BENCH_BOARD      "STM32G474 @ 170 MHz"
+  #else
+    #include "stm32l413.h"
+    #define BENCH_ARCH       "Arm (Cortex-M4, ARMv7E-M + FPv4-SP + DSP)"
+    #define BENCH_ARCH_SHORT "stm32l4"
+    #define BENCH_BOARD      "STM32L413RC"
+  #endif
 
   extern uint32_t SystemCoreClock;
 
@@ -56,10 +66,6 @@
       return acc;
   }
   static inline uint32_t bench_clk_hz(void) { return SystemCoreClock; }
-
-  #define BENCH_ARCH       "Arm (Cortex-M4, ARMv7E-M + FPv4-SP + DSP)"
-  #define BENCH_ARCH_SHORT "stm32g4"
-  #define BENCH_BOARD      "STM32G474 @ 170 MHz"
 
 #else /* host build */
   #include <time.h>

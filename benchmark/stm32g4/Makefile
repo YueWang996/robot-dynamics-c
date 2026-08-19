@@ -21,7 +21,7 @@ CPU    := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 
 CFLAGS := $(CPU) -O3 -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
           -ffunction-sections -fdata-sections \
-          -DSTM32G474xx -DBENCH_STM32G4=1 \
+          -DSTM32G474xx -DBENCH_STM32G4=1 -DBENCH_NO_MAIN=1 \
           -DRD_USE_SINGLE_PRECISION=1 -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=24 \
           -I$(CMSIS)/Include -I$(DEV)/Include -I$(RD) -I$(BENCH) -I.
 

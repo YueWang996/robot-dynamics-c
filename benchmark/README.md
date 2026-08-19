@@ -1,8 +1,9 @@
 # RobotDynamics benchmark
 
 Measures every algorithm in the library across four robot platforms, on a host
-PC, on both CPU architectures of a Raspberry Pi Pico 2 (RP2350), and on an
-STM32G474 (see [`stm32g4/`](stm32g4/)).
+PC, on both CPU architectures of a Raspberry Pi Pico 2 (RP2350), on an
+STM32G474 (see [`stm32g4/`](stm32g4/)) and on an STM32L413 (see
+[`stm32l4/`](stm32l4/), which has no debugger and reports over USB DFU).
 
 Raw CSV: [`results/`](results/). Summary tables: the top-level
 [README](../README.md).
@@ -11,7 +12,7 @@ Raw CSV: [`results/`](results/). Summary tables: the top-level
 
 ```
 bench_main.c        the suite itself -- one file, runs everywhere
-bench_platform.h    microsecond clock + arch detection for host / Pico
+bench_platform.h    microsecond clock + arch detection for host / Pico / STM32
 models/             rd_model_t headers generated from the reference URDFs
 results/            captured CSV, one file per architecture
 CMakeLists.txt      Pico 2 build (Arm or RISC-V)

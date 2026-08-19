@@ -93,7 +93,8 @@ not grow with model size. Reproduce with `tools/validate.py`.
 
 Microseconds per call, single precision, `-O3`, each part at its rated clock.
 Columns: Raspberry Pi Pico 2 (RP2350) Cortex-M33 at 150 MHz, and an STM32G474
-Cortex-M4F at 170 MHz.
+Cortex-M4F at 170 MHz. Four cores measured in total — see
+[`benchmark/results/`](benchmark/results/).
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
@@ -109,16 +110,16 @@ Cortex-M4F at 170 MHz.
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
 (`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
 
-Go2 (18 DOF, 31 links) across the three cores measured so far:
+Go2 (18 DOF, 31 links) across the four cores measured so far:
 
-| | M33 @ 150 MHz | M4F @ 170 MHz | Hazard3 @ 150 MHz |
-|---|---|---|---|
-| `update_kinematics` | 155.2 | 231.8 | 1458.8 |
-| `rnea` | 125.0 | 129.7 | 1650.3 |
-| `crba` | 234.4 | 459.5 | 2293.0 |
-| `aba` | 399.6 | 617.7 | 4239.1 |
-| torque tick | 280 µs — 3.6 kHz | 361 µs — 2.8 kHz | 3109 µs — 322 Hz |
-| operational space | 515 µs — 1.9 kHz | 821 µs — 1.2 kHz | — |
+| | M33 @ 150 MHz<br><sub>RP2350</sub> | M4F @ 170 MHz<br><sub>STM32G474</sub> | M4F @ 80 MHz<br><sub>STM32L413</sub> | Hazard3 @ 150 MHz<br><sub>RP2350</sub> |
+|---|---|---|---|---|
+| `update_kinematics` | 155.2 | 231.8 | 489.5 | 1458.8 |
+| `rnea` | 125.0 | 129.7 | 270.7 | 1650.3 |
+| `crba` | 234.4 | 459.5 | 971.5 | 2293.0 |
+| `aba` | 399.6 | 617.7 | 1299.5 | 4239.1 |
+| torque tick | 280 µs — 3.6 kHz | 361 µs — 2.8 kHz | 760 µs — 1.3 kHz | 3109 µs — 322 Hz |
+| operational space | 515 µs — 1.9 kHz | 821 µs — 1.2 kHz | 1732 µs — 577 Hz | — |
 
 The M4F needs 1.1–2.2× the M33's cycles for identical work even with flash
 stalls removed, and the gap widens on the most data-heavy algorithms — this
@@ -126,6 +127,13 @@ library is memory-bound, so load/store throughput is what separates the two
 cores. Flash wait states cost the G474 about 17% on top of that, concentrated
 almost entirely in `update_kinematics` (~50%), which is the one routine calling
 into libm.
+
+The two M4F parts agree to **within 4% on cycles per call** (median 0.98×) once
+both are at four wait states, despite being separate boards with independently
+written bring-up code — so the M4F figures are a property of the core, and any
+other Cortex-M4F can be scaled from them by clock. Running the L413 at 16 MHz
+with zero wait states reproduces the wait-state cost directly: a 5.00× clock
+change buys 4.50× of wall clock, and the missing 0.50× is the flash.
 
 A torque control tick — `update_kinematics` + `rnea` — and the loop rate it
 allows:
