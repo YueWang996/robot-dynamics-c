@@ -201,13 +201,20 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   `rnea`, but that is code footprint missing in the instruction cache, not the
   libm calls — removing them recovers only ~13% of the penalty.
 
-Do not suggest `-O2`/`-Os` to shrink the code for the instruction cache (costs
-38%/54%) or linking to RAM (slower than flash on Cortex-M4 — SRAM goes over the
-system bus and loses the Harvard split). Both were measured.
+Two dead ends worth not re-proposing: `-O2`/`-Os` to shrink code for the
+instruction cache costs 38%/54%, because the inlining is worth more than the
+fetch stalls; and linking to RAM is slower than flash on Cortex-M4, where SRAM
+goes over the system bus and loses the Harvard split.
 
-**On an RP2350, run dynamics on the Arm cores.** The RISC-V cores have no FPU,
-so everything here is 4–13× slower on them. That is a deployment decision, not
-a code change.
+**A hardware FPU is the one hardware feature that decides whether this library
+is usable.** RP2350's RISC-V cores are 4–13× slower than its Arm cores for this
+reason alone — same die, same clock, and an integer-only control in the same
+suite puts RISC-V slightly *ahead*. An **ESP32-C6** (RV32IMAC, no FPU, 160 MHz)
+is 16–20× slower than the M33: Go2's torque tick is 3.8 ms, 262 Hz. If someone
+asks whether a C3/C6/H2 can run this at a useful rate, the answer is no for a
+quadruped and marginal for a 7-DOF arm; point them at an S3, an Arm part, or a
+part with an FPU. It is a part-selection decision, not something to optimise
+around.
 
 ## Constraints
 

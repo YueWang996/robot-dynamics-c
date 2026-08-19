@@ -176,9 +176,10 @@ def main():
         "riscv":   "RISC-V Hazard3 @ 150 MHz (RP2350)",
         "stm32g4": "Arm Cortex-M4F @ 170 MHz (STM32G474)",
         "stm32l4": "Arm Cortex-M4F @ 80 MHz (STM32L413)",
+        "esp32c6": "RISC-V ESP32-C6 @ 160 MHz (no FPU)",
         "host":    "Host reference",
     }
-    present = [a for a in ("arm", "stm32g4", "stm32l4", "riscv")
+    present = [a for a in ("arm", "stm32g4", "stm32l4", "riscv", "esp32c6")
                if any(k[0] == a for k in data)]
     for arch in present:
         print(f"### {LABEL.get(arch, arch)} -- microseconds per call\n")

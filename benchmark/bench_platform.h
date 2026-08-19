@@ -4,8 +4,9 @@
  * @brief Thin platform layer for the RobotDynamics benchmark.
  *
  * Provides a microsecond clock and an output function that work identically
- * on a host PC and on an RP2350 (both its Arm and its RISC-V cores), so the
- * same bench_main.c produces comparable numbers everywhere.
+ * on a host PC, on an RP2350 (both its Arm and its RISC-V cores), on STM32
+ * and on the ESP32 family, so the same bench_main.c produces comparable
+ * numbers everywhere.
  *
  * The clock deliberately does *not* use a core cycle counter. RP2350's Arm
  * cores expose DWT->CYCCNT while the Hazard3 RISC-V cores expose the mcycle
@@ -66,6 +67,47 @@
       return acc;
   }
   static inline uint32_t bench_clk_hz(void) { return SystemCoreClock; }
+
+#elif defined(BENCH_ESP32)
+  #include "esp_timer.h"
+
+  /* The prebuilt Arduino IDF config points the console at UART0, which on a
+   * USB-only board goes nowhere. Route the suite's output through the sketch,
+   * which writes to Serial. <stdio.h> is already included above, so this
+   * rewrites the call sites and not the declaration. */
+  int bench_printf(const char* fmt, ...);
+  #define printf bench_printf
+
+  /* esp_timer is a 64-bit microsecond counter off the same reference the other
+   * ports use a 1 MHz timer for, so no cycle counter here either. */
+  static inline uint64_t bench_time_us(void) { return (uint64_t)esp_timer_get_time(); }
+
+  /* Set by the sketch from getCpuFrequencyMhz(): the CPU clock is settable at
+   * run time on these parts, so it cannot be a compile-time constant. */
+  extern uint32_t bench_cpu_hz;
+  static inline uint32_t bench_clk_hz(void) { return bench_cpu_hz; }
+
+  #if defined(CONFIG_IDF_TARGET_ESP32C6)
+    #define BENCH_ARCH       "RISC-V (ESP32-C6 HP core, RV32IMAC_Zicsr_Zifencei, no FPU)"
+    #define BENCH_ARCH_SHORT "esp32c6"
+    #define BENCH_BOARD      "ESP32-C6FH4"
+  #elif defined(CONFIG_IDF_TARGET_ESP32C3)
+    #define BENCH_ARCH       "RISC-V (ESP32-C3, RV32IMC, no FPU)"
+    #define BENCH_ARCH_SHORT "esp32c3"
+    #define BENCH_BOARD      "ESP32-C3"
+  #elif defined(CONFIG_IDF_TARGET_ESP32S3)
+    #define BENCH_ARCH       "Xtensa (ESP32-S3 LX7, single-precision FPU)"
+    #define BENCH_ARCH_SHORT "esp32s3"
+    #define BENCH_BOARD      "ESP32-S3"
+  #elif defined(CONFIG_IDF_TARGET_ESP32)
+    #define BENCH_ARCH       "Xtensa (ESP32 LX6, single-precision FPU)"
+    #define BENCH_ARCH_SHORT "esp32"
+    #define BENCH_BOARD      "ESP32"
+  #else
+    #define BENCH_ARCH       "ESP32 family"
+    #define BENCH_ARCH_SHORT "esp32x"
+    #define BENCH_BOARD      "ESP32 family"
+  #endif
 
 #else /* host build */
   #include <time.h>

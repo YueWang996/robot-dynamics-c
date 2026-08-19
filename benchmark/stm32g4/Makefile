@@ -8,6 +8,22 @@
 #
 #   make CUBE=~/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.1
 #   make flash
+#
+#   # run and capture; openocd services the semihosting writes
+#   openocd -f interface/cmsis-dap.cfg -f target/stm32g4x.cfg \
+#     -c init -c "reset halt" -c "arm semihosting enable" -c resume
+#
+# Swap cmsis-dap.cfg for stlink.cfg if that is your probe.
+#
+# Default is 170 MHz from flash, 4 wait states, ART prefetch and caches on --
+# the fastest configuration this part has. Two flags exist to characterise it
+# and neither is how you would ship:
+#
+#   make ZEROWS=1    HSI16 at 16 MHz, where flash needs zero wait states
+#   make RAM=1       link the image to SRAM and load it with the debugger.
+#                    Slower: on Cortex-M4 SRAM at 0x20000000 is reached over
+#                    the System bus, so instruction fetch contends with data
+#                    access instead of using the I-Code bus to flash.
 
 CUBE   ?= $(HOME)/STM32Cube/Repository/STM32Cube_FW_G4_V1.6.1
 TC     ?= /Applications/ArmGNUToolchain/15.2.rel1/arm-none-eabi/bin/arm-none-eabi

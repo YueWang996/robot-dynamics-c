@@ -54,22 +54,20 @@ extern "C" {
     static RD_INLINE rd_real_t rd_atan2(rd_real_t y, rd_real_t x) { return atan2(y, x); }
 #endif
 
-/* One angle, both functions. Measured on an STM32L413 (Cortex-M4F, 80 MHz,
- * 4 wait states), cycles for one (sin, cos) pair and worst-case absolute error
- * against double-precision libm over [-pi, pi]:
+/* One angle, both functions. Cortex-M4F cycles for a (sin, cos) pair, and
+ * worst-case absolute error against double-precision libm over [-pi, pi]:
  *
- *     sinf + cosf        273.6 cyc    5.9e-08     <- default
- *     sincosf (newlib)   313.4 cyc    5.9e-08     slower: it is literally
- *                                                 "bl sinf; bl cosf" plus
- *                                                 stack shuffling, not fused
- *     arm_sin/cos_f32    105.5 cyc    1.9e-05     512-entry table, 2 KB flash
- *     RD_FAST_TRIG=1      57.3 cyc    6.6e-08
+ *     sinf + cosf     273.6 cyc   5.9e-08    default
+ *     RD_FAST_TRIG     57.3 cyc   6.6e-08
  *
- * So sincosf is not worth reaching for, and CMSIS-DSP's table buys less speed
- * than the polynomial while costing 285x the error -- it interpolates linearly
- * between table entries, which float32 can resolve. RD_FAST_TRIG is off by
- * default anyway: the shipped numbers are the ones validated against Pinocchio,
- * and a build option that changes results should be opted into deliberately. */
+ * Two alternatives are worse and should not be reached for: newlib's sincosf
+ * is 313.4 cyc because it is `bl sinf; bl cosf` plus stack shuffling rather
+ * than a fused routine, and CMSIS-DSP's arm_sin/cos_f32 is 105.5 cyc at
+ * 1.9e-05, interpolating linearly between 512 table entries and giving up
+ * accuracy float32 can resolve.
+ *
+ * RD_FAST_TRIG is off by default: a build option that changes results, however
+ * slightly, should be opted into deliberately. */
 #if RD_FAST_TRIG && RD_REAL_IS_FLOAT
 /* Cody-Waite reduction onto [-pi/4, pi/4] plus a quadrant, then Taylor series
  * carried far enough that the truncation error sits under a float32 ULP. Joint
