@@ -172,20 +172,20 @@ Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
 operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 555 µs (1.8 kHz).
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 361 µs
-(2.8 kHz) for torque and 821 µs (1.2 kHz) for operational space — the M4F needs
-1.1–2.2× the M33's cycles for this workload, and running from flash costs
-another ~17%. An **STM32L413 at 80 MHz**, on current code, gives 567 µs
-(1.8 kHz) for torque. The two M4F parts agree within 4% on cycles per call, so
-**scale any other Cortex-M4F from these by clock** and expect to be close.
+On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 271 µs
+(3.7 kHz) for torque and 731 µs (1.4 kHz) for operational space. An
+**STM32L413 at 80 MHz** gives 567 µs (1.8 kHz) for torque. The two M4F parts
+agree within 4% on cycles per call (median 0.98×), so **scale any other
+Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
+the M33's cycles for this workload, and running from flash costs another ~17%.
 
 Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
 with path depth only (~3 µs per level — much cheaper than a full update if you
 need one frame), `aba` at ~13 µs per link.
 
-**The RP2350 and STM32G474 numbers above are stale.** They predate the
-traversal caching and are pessimistic on `update_kinematics` by up to ~40%; only
-the STM32L413 has been re-measured. Say so rather than quoting them as current.
+**The RP2350 numbers above are stale.** They predate the traversal caching and
+are pessimistic on `update_kinematics` by up to ~40%; the STM32 and ESP32
+figures are current. Say so rather than quoting them as current.
 
 **Where the time actually goes.** `update_kinematics` dominates a tick and
 everything else reads the cache it builds, so `rnea`, `crba`, `aba`, `fk_frame`
@@ -193,8 +193,8 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
 
 - **Fixed joints are most of a real robot.** Feet, sensor mounts and inertial
   frames are all fixed nodes — Go2 is 18 of 30 — and their transforms are chain
-  constants. The library caches them per (chain, state) pairing, worth −39.5% on
-  Go2's `update_kinematics`. If a user reports it recomputing every tick, check
+  constants. The library caches them per (chain, state) pairing, worth −39% on
+  Go2's `update_kinematics`, measured the same on two different Cortex-M4F parts. If a user reports it recomputing every tick, check
   they are not re-initialising the state each loop: that throws the cache away.
 - **libm is worth ~9% of it**, no more. `RD_FAST_TRIG=1` buys 5–6% of a tick.
   Flash wait states cost `update_kinematics` ~50% on Cortex-M4F against 2% for
