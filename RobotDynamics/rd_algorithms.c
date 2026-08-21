@@ -14,16 +14,6 @@
  * Internal helpers
  * ============================================================================ */
 
-/* out = A * [p]x, row-major 3x3. Each column is a cross product: 18 mults. */
-static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
-                                          const rd_state_t* state,
-                                          rd_idx_t node, rd_idx_t parent,
-                                          rd_real_t out[6]) {
-    (void)parent;
-    memset(out, 0, 6*sizeof(rd_real_t));
-    out[chain->s_axis[node]] = chain->s_sign[node] * state->vj[node];
-}
-
 /* Gravity as a spatial motion vector in world coordinates: [-g; 0]. */
 static RD_INLINE void algo_gravity_world(const rd_real_t* gravity, rd_real_t out[6]) {
     rd_real_t g[3] = {RD_REAL(0.0), RD_REAL(0.0), -RD_GRAVITY};
@@ -266,9 +256,9 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
         rd_int_t vi = algo_vel_index(chain, node);
         rd_real_t a_joint = (vi >= 0 && qdd) ? qdd[vi] : RD_REAL(0.0);
 
-        rd_real_t vj[6], cor[6];
-        algo_joint_velocity(chain, state, node, parent, vj);
-        rd_spatial_cross_motion(v_i, vj, cor);
+        rd_real_t cor[6];
+        rd_spatial_cross_axis(v_i, chain->s_axis[node],
+                              chain->s_sign[node] * state->vj[node], cor);
 
         for (int k = 0; k < 6; ++k) a[node*6 + k] = a_p[k] + cor[k];
         a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * a_joint;
@@ -345,9 +335,8 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
 
         rd_real_t cor[6];
         if (use_velocity) {
-            rd_real_t vj[6];
-            algo_joint_velocity(chain, state, node, parent, vj);
-            rd_spatial_cross_motion(&state->v[node*6], vj, cor);
+            rd_spatial_cross_axis(&state->v[node*6], chain->s_axis[node],
+                                  chain->s_sign[node] * state->vj[node], cor);
         } else {
             memset(cor, 0, 6*sizeof(rd_real_t));
         }
@@ -378,10 +367,8 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
         const rd_int_t c1 = chain->dyn_child_start[node + 1];
         for (rd_int_t ci = c0; ci < c1; ++ci) {
             rd_idx_t child = chain->dyn_child[ci];
-            rd_real_t f_child[6];
-            rd_spatial_transform_force(&state->T_dyn[child*16],
-                                       &f[child*6], f_child);
-            for (int k = 0; k < 6; ++k) f_i[k] += f_child[k];
+            rd_spatial_transform_force_accum(&state->T_dyn[child*16],
+                                             &f[child*6], f_i);
         }
     }
 
@@ -539,15 +526,14 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     /* --- Pass 1 (outward): bias forces and velocity-product accelerations -- */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
         rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* v_i = &state->v[node*6];
 
         rd_abi_from_rbi(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
                         RD_IA(node));
 
-        rd_real_t vj[6];
-        algo_joint_velocity(chain, state, node, parent, vj);
-        rd_spatial_cross_motion(v_i, vj, &c[node*6]);
+        rd_spatial_cross_axis(v_i, chain->s_axis[node],
+                              chain->s_sign[node] * state->vj[node],
+                              &c[node*6]);
 
         rd_real_t Iv[6];
         rd_spatial_inertia_mul(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
@@ -596,12 +582,9 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         }
 
         if (parent != -1) {
-            rd_real_t Tinv[16];
-            rd_mat4_inv(&state->T_dyn[node*16], Tinv);
-            rd_abi_congruence_accum(Tinv, Ia, RD_IA(parent));
-            rd_real_t pf[6];
-            rd_spatial_transform_force(&state->T_dyn[node*16], pa, pf);
-            for (int k = 0; k < 6; ++k) pA[parent*6 + k] += pf[k];
+            rd_abi_congruence_accum(&state->T_dyn[node*16], Ia, RD_IA(parent));
+            rd_spatial_transform_force_accum(&state->T_dyn[node*16], pa,
+                                             &pA[parent*6]);
         }
         /* For the root, Ia and pa already alias IA[node]/pA[node], which is
          * exactly what the base solve in pass 3 reads. */

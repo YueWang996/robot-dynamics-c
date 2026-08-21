@@ -671,15 +671,28 @@ static RD_INLINE void rd_rbi_col(const rd_real_t* RD_RESTRICT ic, int k,
     }
 }
 
-/** accum += Ad(T)^T I Ad(T), all in packed form. Same block algebra as the
- *  6x6 version; A21 comes from A12 transposed and BL is never written. */
+/*
+ * accum += Ad(inv(T))^T I Ad(inv(T)), all in packed form -- the articulated
+ * inertia of a child, added to its parent's, given the child's pose in the
+ * parent.
+ *
+ * Same block algebra as the 6x6 version; A21 comes from A12 transposed and BL
+ * is never written. The inverse is folded into the two lines that read T:
+ * inv(T)'s rotation is T's transposed, which is a different set of subscripts
+ * and not an operation, and its translation is nine multiplies that stay in
+ * registers. Materialising the 4x4 instead would spend a store and a reload on
+ * every one of its sixteen floats.
+ */
 static RD_INLINE void rd_abi_congruence_accum(const rd_real_t* RD_RESTRICT T,
                                               const rd_real_t* RD_RESTRICT I_in,
                                               rd_real_t* RD_RESTRICT accum) {
-    const rd_real_t R[9] = { T[0], T[4], T[8],
-                             T[1], T[5], T[9],
-                             T[2], T[6], T[10] };
-    const rd_real_t p[3] = { T[12], T[13], T[14] };
+    const rd_real_t R[9] = { T[0], T[1], T[2],
+                             T[4], T[5], T[6],
+                             T[8], T[9], T[10] };
+    const rd_real_t t0 = T[12], t1 = T[13], t2 = T[14];
+    const rd_real_t p[3] = { -(R[0]*t0 + R[1]*t1 + R[2]*t2),
+                             -(R[3]*t0 + R[4]*t1 + R[5]*t2),
+                             -(R[6]*t0 + R[7]*t1 + R[8]*t2) };
 
     rd_real_t A11[9], C[9], S12[9];
     A11[0]=I_in[0]; A11[1]=I_in[1]; A11[2]=I_in[2];
@@ -843,6 +856,30 @@ static RD_INLINE void rd_spatial_transform_motion_inv(const rd_real_t* RD_RESTRI
     v_out[5] = T[8]*wx + T[9]*wy + T[10]*wz;
 }
 
+/* The same, accumulated. Every caller in the library adds the transformed
+ * force into a running total, so the six-float temporary and the read-back it
+ * costs are pure overhead. */
+static RD_INLINE void rd_spatial_transform_force_accum(const rd_real_t* RD_RESTRICT T,
+                                                       const rd_real_t* RD_RESTRICT f_in,
+                                                       rd_real_t* RD_RESTRICT f_acc) {
+    rd_real_t fx = f_in[0], fy = f_in[1], fz = f_in[2];
+    rd_real_t tx = f_in[3], ty = f_in[4], tz = f_in[5];
+
+    rd_real_t f_rot_x = T[0]*fx + T[4]*fy + T[8]*fz;
+    rd_real_t f_rot_y = T[1]*fx + T[5]*fy + T[9]*fz;
+    rd_real_t f_rot_z = T[2]*fx + T[6]*fy + T[10]*fz;
+
+    rd_real_t t_rot_x = T[0]*tx + T[4]*ty + T[8]*tz;
+    rd_real_t t_rot_y = T[1]*tx + T[5]*ty + T[9]*tz;
+    rd_real_t t_rot_z = T[2]*tx + T[6]*ty + T[10]*tz;
+
+    rd_real_t px = T[12], py = T[13], pz = T[14];
+    f_acc[0] += f_rot_x; f_acc[1] += f_rot_y; f_acc[2] += f_rot_z;
+    f_acc[3] += t_rot_x + (py*f_rot_z - pz*f_rot_y);
+    f_acc[4] += t_rot_y + (pz*f_rot_x - px*f_rot_z);
+    f_acc[5] += t_rot_z + (px*f_rot_y - py*f_rot_x);
+}
+
 static RD_INLINE void rd_spatial_transform_force(const rd_real_t* RD_RESTRICT T,
                                                  const rd_real_t* RD_RESTRICT f_in,
                                                  rd_real_t* RD_RESTRICT f_out) {
@@ -864,6 +901,39 @@ static RD_INLINE void rd_spatial_transform_force(const rd_real_t* RD_RESTRICT T,
     f_out[3] = t_rot_x + (py*f_rot_z - pz*f_rot_y);
     f_out[4] = t_rot_y + (pz*f_rot_x - px*f_rot_z);
     f_out[5] = t_rot_z + (px*f_rot_y - py*f_rot_x);
+}
+
+/*
+ * out = v x (val * e_k), the motion cross product against a unit spatial axis.
+ *
+ * The only motion vector either RNEA or ABA ever crosses v with is S*qd, and
+ * S is a unit spatial axis -- one component, plus or minus one. Building the
+ * six-vector and running the general cross costs a six-float temporary and 24
+ * multiplies to rediscover that a cross product with a scaled basis vector
+ * touches four components. This costs four multiplies and no temporary.
+ */
+static RD_INLINE void rd_spatial_cross_axis(const rd_real_t* RD_RESTRICT v,
+                                            rd_int_t s_axis, rd_real_t val,
+                                            rd_real_t* RD_RESTRICT out) {
+    const rd_int_t j = (s_axis >= 3) ? (s_axis - 3) : s_axis;
+    const rd_int_t i = (j == 2) ? 0 : (j + 1);
+    const rd_int_t l = (i == 2) ? 0 : (i + 1);
+
+    if (s_axis >= 3) {
+        /* Revolute: a x e_j leaves component j empty and swaps the other two. */
+        out[j]     = RD_REAL(0.0);
+        out[i]     =  val * v[l];
+        out[l]     = -val * v[i];
+        out[3 + j] = RD_REAL(0.0);
+        out[3 + i] =  val * v[3 + l];
+        out[3 + l] = -val * v[3 + i];
+    } else {
+        /* Prismatic: only v's angular half acts, and the result is linear. */
+        out[j] = RD_REAL(0.0);
+        out[i] =  val * v[3 + l];
+        out[l] = -val * v[3 + i];
+        out[3] = out[4] = out[5] = RD_REAL(0.0);
+    }
 }
 
 /**
