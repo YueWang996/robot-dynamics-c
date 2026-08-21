@@ -126,19 +126,19 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.4 | 55.5 | 24.9 | 1458.8 | 355.3 |
-| `rnea` | 51.5 | 100.6 | 45.4 | 1650.3 | 936.1 |
-| `crba` | 60.9 | 113.3 | 55.9 | 2293.0 | 678.5 |
-| `aba` | 181.0 | 327.1 | 120.2 | 4239.1 | 2208.1 |
-| torque tick | 79 µs<br>12.7 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 3109 µs<br>322 Hz | 1291 µs<br>774 Hz |
-| operational space | 140 µs<br>7.2 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 5402 µs<br>185 Hz | 1970 µs<br>508 Hz |
+| `update_kinematics` | 27.4 | 55.5 | 24.9 | 265.3 | 355.3 |
+| `rnea` | 51.5 | 100.6 | 45.4 | 767.9 | 936.1 |
+| `crba` | 60.9 | 113.3 | 55.9 | 530.4 | 678.5 |
+| `aba` | 181.0 | 327.1 | 120.2 | 1756.8 | 2208.1 |
+| torque tick | 79 µs<br>12.7 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
+| operational space | 140 µs<br>7.2 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1970 µs<br>508 Hz |
 
-> The Pico 2 is the only board here whose image runs from SRAM
-> (`copy_to_ram`), so its column carries no flash wait states while the others
-> pay four — most of why a 150 MHz M33 lands ahead of a 170 MHz M4F. The G474
-> column predates the last four changes, worth about 3% on a torque tick, 10%
-> on `crba` and 12% on `aba`, and will be refreshed when that board is back on
-> the desk. The Hazard3 column is the properly stale one, 2–3x behind.
+> Both Pico 2 columns are the only ones whose image runs from SRAM
+> (`copy_to_ram`), so they carry no flash wait states while the others pay
+> four — most of why a 150 MHz M33 lands ahead of a 170 MHz M4F. Every column
+> but the G474 is current; that one predates the last four changes, worth about
+> 3% on a torque tick, 10% on `crba` and 12% on `aba`, and will be refreshed
+> when the board is back on the desk.
 
 Which of these gains travel to a core without an FPU is worth knowing: on the
 ESP32-C6, where every `rd_real_t` operation is a soft-float call, the work that
