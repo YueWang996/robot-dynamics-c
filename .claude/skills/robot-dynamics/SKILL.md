@@ -162,19 +162,28 @@ STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
 | | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) |
 |---|---|---|---|
-| `update_kinematics` | 10.8 | 18.8 | 30.2 |
-| `rnea` | 18.3 | 32.3 | 51.4 |
+| `update_kinematics` | 10.4 | 17.9 | 27.4 |
+| `rnea` | 18.3 | 32.3 | 51.5 |
 | `crba` | 18.6 | 40.5 | 60.9 |
-| `aba` | 56.7 | 103.8 | 180.0 |
+| `aba` | 57.4 | 104.1 | 181.0 |
+| `fd_crba` | 55.5 | 84.5 | 197.6 |
 | `jacobian_world` | 10.7 | 15.1 | 12.3 |
 
 Control-loop budgets on that part:
 
 | | spine | xarm7 | go2 |
 |---|---|---|---|
-| torque `update + rnea` | 29 µs / 34.4 kHz | 51 µs / 19.6 kHz | 82 µs / 12.3 kHz |
-| operational space `+ crba` | 48 µs / 21.0 kHz | 92 µs / 10.9 kHz | 142 µs / 7.0 kHz |
-| forward dynamics `update + aba` | 67 µs / 14.8 kHz | 123 µs / 8.2 kHz | 210 µs / 4.8 kHz |
+| torque `update + rnea` | 29 µs / 34.9 kHz | 50 µs / 19.9 kHz | 79 µs / 12.7 kHz |
+| operational space `+ crba` | 47 µs / 21.2 kHz | 91 µs / 11.0 kHz | 140 µs / 7.2 kHz |
+| forward dynamics, best method | 66 µs / 15.2 kHz | 102 µs / 9.8 kHz | 208 µs / 4.8 kHz |
+
+**Forward dynamics has two methods and the caller picks.**
+`rd_forward_dynamics(..., RD_FD_ABA | RD_FD_CRBA, work, qdd)`. CRBA builds M
+and h and factorises; it needs `rd_forward_dynamics_work()` floats of scratch
+and wins below roughly ten to twelve velocity DOF -- xarm7 by 16%, spine by
+3%, while Go2 at nv=18 goes the other way by 8%. A floating base pushes the
+crossover down: its six DOF are ancestors of every joint, so M has no sparsity
+for the factorisation to exploit. `rd_aba()` is still there and unchanged.
 
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need

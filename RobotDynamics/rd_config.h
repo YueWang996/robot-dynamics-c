@@ -39,10 +39,11 @@ extern "C" {
     #define RD_USE_SINGLE_PRECISION  1
 #endif
 
-/* Polynomial sin/cos instead of libm's: 57 cycles per (sin, cos) pair against
- * libm's 274 on Cortex-M4F, at the same accuracy -- 6.6e-08 worst case against
- * double precision over [-pi, pi], where libm is 5.9e-08. Both pass the
- * Pinocchio comparison at the same tolerances. Set to 0 for libm's. */
+/* Polynomial sin/cos instead of libm's: 169 cycles per (sin, cos) pair against
+ * libm's 521, measured inside rd_update_kinematics on an STM32G474 at 170 MHz,
+ * at the same accuracy -- 6.6e-08 worst case against double precision over
+ * [-pi, pi], where libm is 5.9e-08. Both pass the Pinocchio comparison at the
+ * same tolerances. Set to 0 for libm's. */
 #ifndef RD_FAST_TRIG
     #define RD_FAST_TRIG  1
 #endif

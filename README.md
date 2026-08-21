@@ -94,16 +94,17 @@ at 170 MHz:
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
-| `update_kinematics` | 7.28 | 10.79 | 18.81 | 30.19 |
-| `fk_frame` | 7.18 | 9.55 | 18.26 | 10.64 |
-| `jacobian_world` | 6.29 | 10.65 | 15.05 | 12.28 |
-| `jacobian_local` | 8.73 | 16.88 | 21.95 | 19.91 |
-| `rnea` | 14.04 | 18.25 | 32.28 | 51.44 |
-| `aba` | n/a | 56.67 | 103.82 | 179.97 |
-| `crba` | 10.32 | 18.62 | 40.49 | 60.86 |
-| `gravity` | 9.80 | 12.64 | 22.05 | 34.50 |
-| `spatial_acceleration` | 8.38 | 10.35 | 18.68 | 22.82 |
-| `spatial_velocity` | 3.08 | 3.75 | 7.00 | 4.68 |
+| `update_kinematics` | 6.71 | 10.36 | 17.92 | 27.35 |
+| `fk_frame` | 7.20 | 9.56 | 18.28 | 10.62 |
+| `jacobian_world` | 6.31 | 10.68 | 15.06 | 12.31 |
+| `jacobian_local` | 8.75 | 16.90 | 21.96 | 19.93 |
+| `rnea` | 14.06 | 18.26 | 32.29 | 51.45 |
+| `aba` | n/a | 57.41 | 104.06 | 180.96 |
+| `fd_crba` | n/a | 55.46 | 84.52 | 197.64 |
+| `crba` | 10.34 | 18.64 | 40.52 | 60.88 |
+| `gravity` | 9.82 | 12.65 | 22.06 | 34.52 |
+| `spatial_acceleration` | 8.40 | 10.37 | 18.70 | 22.84 |
+| `spatial_velocity` | 3.11 | 3.78 | 7.03 | 4.71 |
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
 (`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
@@ -112,24 +113,25 @@ What that buys per control tick on the same part:
 
 | Robot | dof | Torque tick | Operational space | Forward dynamics |
 |---|---|---|---|---|
-| `spine` | 9 | 29 µs — 34.4 kHz | 48 µs — 21.0 kHz | 67 µs — 14.8 kHz |
-| `xarm7` | 7 | 51 µs — 19.6 kHz | 92 µs — 10.9 kHz | 123 µs — 8.2 kHz |
-| `go2` | 18 | 82 µs — 12.3 kHz | 142 µs — 7.0 kHz | 210 µs — 4.8 kHz |
+| `spine` | 9 | 29 µs — 34.9 kHz | 47 µs — 21.2 kHz | 66 µs — 15.2 kHz |
+| `xarm7` | 7 | 50 µs — 19.9 kHz | 91 µs — 11.0 kHz | 102 µs — 9.8 kHz |
+| `go2` | 18 | 79 µs — 12.7 kHz | 140 µs — 7.2 kHz | 208 µs — 4.8 kHz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
-forward dynamics is `update_kinematics` + `aba`.
+forward dynamics is `update_kinematics` + whichever of the two methods below is
+faster for that robot.
 
 Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 
 | | M4F @ 170<br><sub>G474</sub> | M33 @ 150<br><sub>RP2350</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | **30.2** | 155.2 | 489.5 | 1458.8 | 1495.0 |
+| `update_kinematics` | **27.4** | 155.2 | 489.5 | 1458.8 | 1495.0 |
 | `rnea` | **51.4** | 125.0 | 270.7 | 1650.3 | 2324.4 |
 | `crba` | **60.9** | 234.4 | 971.5 | 2293.0 | 3627.7 |
 | `aba` | **180.0** | 399.6 | 1299.5 | 4239.1 | 6243.3 |
-| torque tick | **82 µs<br>12.3 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | **142 µs<br>7.0 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| torque tick | **79 µs<br>12.7 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
+| operational space | **140 µs<br>7.2 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
 
 > Only the STM32G474 column is current. The others predate this round of
 > optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
@@ -150,9 +152,9 @@ Measured on the STM32G474, `update_kinematics` + the method:
 
 | Robot | nv | ABA | CRBA | |
 |---|---|---|---|---|
-| `xarm7` | 7, fixed base | 122.3 µs | **103.6 µs** | CRBA −15% |
-| `spine` | 9, floating base | 67.6 µs | **66.9 µs** | CRBA −1% |
-| `go2` | 18, floating base | **209.8 µs** | 232.4 µs | ABA −10% |
+| `xarm7` | 7, fixed base | 122.0 µs | **102.4 µs** | CRBA −16% |
+| `spine` | 9, floating base | 67.8 µs | **65.8 µs** | CRBA −3% |
+| `go2` | 18, floating base | **208.3 µs** | 225.0 µs | ABA −8% |
 
 The crossover is around ten to twelve velocity DOF, and a floating base pushes
 it down: its six DOF are ancestors of every joint, so the mass matrix has no
