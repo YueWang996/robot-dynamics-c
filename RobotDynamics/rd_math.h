@@ -753,27 +753,28 @@ static RD_INLINE void rd_congruence3_sym_accum(const rd_real_t R[9],
  * is therefore one column of an inertia, not a matrix-vector product. No test
  * is needed -- the model type cannot express anything else.
  */
+/* Top three from the symmetric A11 or from A12, bottom three from A12's row
+ * or from the symmetric A22 -- written out per axis so every subscript is a
+ * constant, rather than read out of an index table at run time. */
+#define RD_ABI_COL_(T0, T1, T2, B0, B1, B2)                                 \
+    do {                                                                    \
+        out[0] = sgn * I[T0]; out[1] = sgn * I[T1]; out[2] = sgn * I[T2];   \
+        out[3] = sgn * I[B0]; out[4] = sgn * I[B1]; out[5] = sgn * I[B2];   \
+    } while (0)
+
 static RD_INLINE void rd_abi_col(const rd_real_t* RD_RESTRICT I, int k,
                                  rd_real_t sgn, rd_real_t* RD_RESTRICT out) {
-    static const int u[9] = {0,1,2, 1,3,4, 2,4,5};
-    static const int w[9] = {15,16,17, 16,18,19, 17,19,20};
-    if (k < 3) {
-        out[0] = sgn * I[u[0*3 + k]];
-        out[1] = sgn * I[u[1*3 + k]];
-        out[2] = sgn * I[u[2*3 + k]];
-        out[3] = sgn * I[6 + k*3 + 0];       /* A21 col k = A12 row k */
-        out[4] = sgn * I[6 + k*3 + 1];
-        out[5] = sgn * I[6 + k*3 + 2];
-    } else {
-        const int j = k - 3;
-        out[0] = sgn * I[6 + 0*3 + j];
-        out[1] = sgn * I[6 + 1*3 + j];
-        out[2] = sgn * I[6 + 2*3 + j];
-        out[3] = sgn * I[w[0*3 + j]];
-        out[4] = sgn * I[w[1*3 + j]];
-        out[5] = sgn * I[w[2*3 + j]];
+    switch (k) {
+        case 0:  RD_ABI_COL_( 0,  1,  2,  6,  7,  8); break;
+        case 1:  RD_ABI_COL_( 1,  3,  4,  9, 10, 11); break;
+        case 2:  RD_ABI_COL_( 2,  4,  5, 12, 13, 14); break;
+        case 3:  RD_ABI_COL_( 6,  9, 12, 15, 16, 17); break;
+        case 4:  RD_ABI_COL_( 7, 10, 13, 16, 18, 19); break;
+        default: RD_ABI_COL_( 8, 11, 14, 17, 19, 20); break;
     }
 }
+
+#undef RD_ABI_COL_
 
 /** The same, for a rigid-body inertia in the ten-number {m, h, J} form. */
 static RD_INLINE void rd_rbi_col(const rd_real_t* RD_RESTRICT ic, int k,
@@ -1090,29 +1091,46 @@ static RD_INLINE void rd_spatial_transform_force(const rd_real_t* RD_RESTRICT T,
  * multiplies to rediscover that a cross product with a scaled basis vector
  * touches four components. This costs four multiplies and no temporary.
  */
+/* J is the axis, I and L the other two in cyclic order. Spelled out per axis
+ * so the subscripts are compile-time constants: vldr and vstr take an
+ * immediate offset and nothing else, and a run-time axis here means ten
+ * computed addresses off two bases. */
+#define RD_CROSS_ROT_(J, I, L)                                              \
+    do {                                                                    \
+        out[(J)]     = RD_REAL(0.0);                                        \
+        out[(I)]     =  val * v[(L)];                                       \
+        out[(L)]     = -val * v[(I)];                                       \
+        out[3 + (J)] = RD_REAL(0.0);                                        \
+        out[3 + (I)] =  val * v[3 + (L)];                                   \
+        out[3 + (L)] = -val * v[3 + (I)];                                   \
+    } while (0)
+
+#define RD_CROSS_LIN_(J, I, L)                                              \
+    do {                                                                    \
+        out[(J)] = RD_REAL(0.0);                                            \
+        out[(I)] =  val * v[3 + (L)];                                       \
+        out[(L)] = -val * v[3 + (I)];                                       \
+        out[3] = out[4] = out[5] = RD_REAL(0.0);                            \
+    } while (0)
+
 static RD_INLINE void rd_spatial_cross_axis(const rd_real_t* RD_RESTRICT v,
                                             rd_int_t s_axis, rd_real_t val,
                                             rd_real_t* RD_RESTRICT out) {
-    const rd_int_t j = (s_axis >= 3) ? (s_axis - 3) : s_axis;
-    const rd_int_t i = (j == 2) ? 0 : (j + 1);
-    const rd_int_t l = (i == 2) ? 0 : (i + 1);
-
-    if (s_axis >= 3) {
-        /* Revolute: a x e_j leaves component j empty and swaps the other two. */
-        out[j]     = RD_REAL(0.0);
-        out[i]     =  val * v[l];
-        out[l]     = -val * v[i];
-        out[3 + j] = RD_REAL(0.0);
-        out[3 + i] =  val * v[3 + l];
-        out[3 + l] = -val * v[3 + i];
-    } else {
+    switch (s_axis) {
+        /* Revolute: a x e_j leaves component j empty and swaps the other two,
+         * in both halves. */
+        case 3:  RD_CROSS_ROT_(0, 1, 2); break;
+        case 4:  RD_CROSS_ROT_(1, 2, 0); break;
+        case 5:  RD_CROSS_ROT_(2, 0, 1); break;
         /* Prismatic: only v's angular half acts, and the result is linear. */
-        out[j] = RD_REAL(0.0);
-        out[i] =  val * v[3 + l];
-        out[l] = -val * v[3 + i];
-        out[3] = out[4] = out[5] = RD_REAL(0.0);
+        case 0:  RD_CROSS_LIN_(0, 1, 2); break;
+        case 1:  RD_CROSS_LIN_(1, 2, 0); break;
+        default: RD_CROSS_LIN_(2, 0, 1); break;
     }
 }
+
+#undef RD_CROSS_ROT_
+#undef RD_CROSS_LIN_
 
 /**
  * @brief Sparse Motion Cross Product: out = v1 x v2
