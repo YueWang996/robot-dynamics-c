@@ -57,7 +57,6 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
     state->T_world           = buf + off; off += (size_t)n * 16;
     state->T_dyn             = buf + off; off += (size_t)n * 16;
     state->v                 = buf + off; off += (size_t)n * 6;
-    state->S                 = buf + off; off += (size_t)n * 6;
     state->vj                = buf + off; off += (size_t)n;
 
     state->inertia           = buf + off; off += (size_t)n * 36;
@@ -98,32 +97,11 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
     const int cached = (state->cached_for == (const void*)chain);
 
     /* Cold pass, once per (chain, state) pairing: everything the configuration
-     * cannot change. S for every node, and for a fixed link its pose in the
-     * nearest moving ancestor, which is a constant. After this the per-tick
-     * loop below never has to look at a fixed link again. */
+     * cannot change: a fixed link's pose in its nearest moving ancestor. After
+     * this the per-tick loop below never has to look at a fixed link again. */
     if (!cached) {
         for (rd_int_t ti = 0; ti < n; ++ti) {
-            rd_idx_t node  = chain->topo_order[ti];
-            rd_idx_t jidx  = chain->joint_idx[node];
-            rd_int_t jtype = chain->joint_type[node];
-            rd_real_t* S_i = &state->S[node*6];
-
-            if ((jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
-                                jtype == RD_JOINT_PRISMATIC)) {
-                /* The link frame is the joint's child frame, so the motion
-                 * subspace is the joint twist itself. */
-                const rd_real_t* axis = &chain->axes[jidx*3];
-                memset(S_i, 0, 6*sizeof(rd_real_t));
-                if (jtype == RD_JOINT_REVOLUTE) {
-                    S_i[3] = axis[0]; S_i[4] = axis[1]; S_i[5] = axis[2];
-                } else {
-                    S_i[0] = axis[0]; S_i[1] = axis[1]; S_i[2] = axis[2];
-                }
-            } else {
-                memset(S_i, 0, 6*sizeof(rd_real_t));
-                state->vj[node] = RD_REAL(0.0);
-            }
-
+            rd_idx_t node = chain->topo_order[ti];
             if (rd_chain_node_is_dynamic(chain, node)) continue;
 
             /* A fixed link contributes only its joint offset, composed through
@@ -152,7 +130,6 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         const int actuated = (jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
                                              jtype == RD_JOINT_PRISMATIC);
         rd_real_t* Td  = &state->T_dyn[node*16];
-        const rd_real_t* S_i = &state->S[node*6];
 
         /* Built straight into T_dyn when the parent is itself a dynamics node,
          * because then the two are the same transform. That is exactly when
@@ -205,7 +182,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         } else {
             rd_spatial_transform_motion_inv(Td, &state->v[danc*6], v_i);
             if (actuated) {
-                for (int kk = 0; kk < 6; ++kk) v_i[kk] += S_i[kk] * v_joint;
+                v_i[chain->s_axis[node]] += chain->s_sign[node] * v_joint;
             }
         }
     }

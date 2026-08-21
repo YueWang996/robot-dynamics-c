@@ -44,6 +44,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->frame_names = (char**)RD_MALLOC(sizeof(char*) * n);
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
     chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
+    chain->s_axis = (rd_idx_t*)RD_CALLOC(n, sizeof(rd_idx_t));
+    chain->s_sign = (rd_real_t*)RD_CALLOC(n, sizeof(rd_real_t));
     chain->dyn_order = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_parent = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_child = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
@@ -61,7 +63,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         !chain->axes || !chain->T_joint_offset ||
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
         !chain->inertia_compact ||
-        !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
+        !chain->s_axis || !chain->s_sign || !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
         !chain->dyn_child_start) {
         rd_chain_free(chain);
         return RD_ERR_ALLOC_FAILED;
@@ -256,6 +258,23 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         }
     }
 
+    /* Motion subspace as an axis and a sign. A revolute joint's twist is
+     * angular, so it selects one of components 3..5; a prismatic joint's is
+     * linear, selecting 0..2. */
+    for (rd_int_t i = 0; i < n; ++i) {
+        chain->s_axis[i] = 0;
+        chain->s_sign[i] = RD_REAL(0.0);
+        rd_idx_t j = chain->joint_idx[i];
+        if (j < 0) continue;
+        if (chain->joint_type[i] != RD_JOINT_REVOLUTE &&
+            chain->joint_type[i] != RD_JOINT_PRISMATIC) continue;
+        const rd_real_t* ax = &chain->axes[j*3];
+        rd_int_t k = (ax[0] != RD_REAL(0.0)) ? 0 : ((ax[1] != RD_REAL(0.0)) ? 1 : 2);
+        chain->s_axis[i] = (rd_idx_t)((chain->joint_type[i] == RD_JOINT_REVOLUTE)
+                                      ? (3 + k) : k);
+        chain->s_sign[i] = ax[k];
+    }
+
     /* ---- Dynamics tree ---------------------------------------------------
      * Nearest moving ancestor, by walking up rather than relying on the order
      * topo_order happens to have produced. */
@@ -380,6 +399,8 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->parent_path);
     RD_FREE(chain->parent_path_len);
     RD_FREE(chain->inertia_compact);
+    RD_FREE(chain->s_axis);
+    RD_FREE(chain->s_sign);
     RD_FREE(chain->dyn_order);
     RD_FREE(chain->dyn_parent);
     RD_FREE(chain->dyn_child);

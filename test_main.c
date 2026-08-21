@@ -254,10 +254,10 @@ int main(void) {
         rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
         rd_update_kinematics(&chain, &cold,  q_base, q_joints, qd);
 
-        /* Only the kinematics block: T_dyn, T_world, v, S and
+        /* Only the kinematics block: T_dyn, T_world, v and
          * vj, laid out in that order by rd_state_init. Past it is scratch that
          * the algorithms above have written in `state` and never in `cold`. */
-        size_t floats = (size_t)chain.n_nodes * (16 + 16 + 6 + 6 + 1);
+        size_t floats = (size_t)chain.n_nodes * (16 + 16 + 6 + 1);
         int differing = 0;
         for (size_t i = 0; i < floats; ++i) {
             if (state_buf[i] != cold_buf[i]) differing++;

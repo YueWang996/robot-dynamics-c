@@ -172,8 +172,8 @@ Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
 operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 555 µs (1.8 kHz).
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 140 µs
-(7.2 kHz) for torque and 253 µs (4.0 kHz) for operational space. The two M4F parts
+On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 131 µs
+(7.6 kHz) for torque and 242 µs (4.1 kHz) for operational space. The two M4F parts
 agree within 4% on cycles per call (median 0.98×), so **scale any other
 Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
 the M33's cycles for this workload, and running from flash costs another ~17%.
@@ -205,6 +205,9 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   never from `state->T_world` directly** — for a fixed link that slot is not
   maintained. If a user reports it recomputing every tick, check
   they are not re-initialising the state each loop: that throws the cache away.
+- **The motion subspace is an axis and a sign**, never a stored six-vector:
+  `rd_axis_t` can only hold ±X/±Y/±Z, so every `I*S` product is a column read.
+  `state->S` does not exist.
 - **There is no separate link offset.** The link frame *is* the joint's child
   frame, so the motion subspace is the joint twist itself and `rd_axis_t` can
   only hold ±X/±Y/±Z. Anything assuming a link-offset transform is out of date.

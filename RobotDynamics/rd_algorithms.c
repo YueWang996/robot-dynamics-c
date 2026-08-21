@@ -35,10 +35,9 @@ static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
                                           const rd_state_t* state,
                                           rd_idx_t node, rd_idx_t parent,
                                           rd_real_t out[6]) {
-    (void)chain; (void)parent;
-    const rd_real_t* S_i = &state->S[node*6];
-    const rd_real_t vj = state->vj[node];
-    for (int k = 0; k < 6; ++k) out[k] = S_i[k] * vj;
+    (void)parent;
+    memset(out, 0, 6*sizeof(rd_real_t));
+    out[chain->s_axis[node]] = chain->s_sign[node] * state->vj[node];
 }
 
 /* Gravity as a spatial motion vector in world coordinates: [-g; 0]. */
@@ -268,7 +267,6 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
         rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* Td  = &state->T_dyn[node*16];
         const rd_real_t* v_i = &state->v[node*6];
-        const rd_real_t* S_i = &state->S[node*6];
 
         /* No gravity term: this is a true spatial acceleration, not the
          * gravity-loaded pseudo-acceleration RNEA propagates. */
@@ -290,9 +288,8 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
         algo_joint_velocity(chain, state, node, parent, vj);
         rd_spatial_cross_motion(v_i, vj, cor);
 
-        for (int k = 0; k < 6; ++k) {
-            a[node*6 + k] = a_p[k] + S_i[k]*a_joint + cor[k];
-        }
+        for (int k = 0; k < 6; ++k) a[node*6 + k] = a_p[k] + cor[k];
+        a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * a_joint;
     }
 
     /* A fixed link is rigidly attached to its moving ancestor, so its
@@ -348,7 +345,6 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
         rd_idx_t node   = chain->dyn_order[di];
         rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* Td  = &state->T_dyn[node*16];
-        const rd_real_t* S_i = &state->S[node*6];
 
         rd_real_t a_p[6];
         if (parent == -1) {
@@ -374,9 +370,8 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
             memset(cor, 0, 6*sizeof(rd_real_t));
         }
 
-        for (int k = 0; k < 6; ++k) {
-            a[node*6 + k] = a_p[k] + S_i[k]*a_joint + cor[k];
-        }
+        for (int k = 0; k < 6; ++k) a[node*6 + k] = a_p[k] + cor[k];
+        a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * a_joint;
     }
 
     /* Inward: forces */
@@ -417,9 +412,7 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
         rd_idx_t node = chain->dyn_order[di];
         rd_int_t vi = algo_vel_index(chain, node);
         if (vi < 0) continue;
-        rd_real_t val = RD_REAL(0.0);
-        for (int k = 0; k < 6; ++k) val += state->S[node*6 + k] * f[node*6 + k];
-        tau_out[vi] = val;
+        tau_out[vi] = chain->s_sign[node] * f[node*6 + chain->s_axis[node]];
     }
     return RD_OK;
 }
@@ -495,13 +488,9 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
         rd_int_t col = algo_vel_index(chain, node);
         if (col < 0) continue;
 
-        const rd_real_t* S_i = &state->S[node*6];
         rd_real_t F[6];
-        rd_spatial_inertia_mul(RD_IC(node), S_i, F);
-
-        rd_real_t diag = RD_REAL(0.0);
-        for (int k = 0; k < 6; ++k) diag += S_i[k] * F[k];
-        M_out[col*nv + col] = diag;
+        rd_rbi_col(RD_IC(node), chain->s_axis[node], chain->s_sign[node], F);
+        M_out[col*nv + col] = chain->s_sign[node] * F[chain->s_axis[node]];
 
         /*
          * Walk the parent chain once, filling both the joint-joint couplings
@@ -522,8 +511,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
 
             rd_int_t par_col = algo_vel_index(chain, curr);
             if (par_col >= 0) {
-                rd_real_t val = RD_REAL(0.0);
-                for (int k = 0; k < 6; ++k) val += state->S[curr*6 + k] * f_prop[k];
+                rd_real_t val = chain->s_sign[curr] * f_prop[chain->s_axis[curr]];
                 M_out[col*nv + par_col] = val;
                 M_out[par_col*nv + col] = val;
             }
@@ -589,7 +577,8 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
         rd_idx_t node   = chain->dyn_order[di];
         rd_idx_t parent = chain->dyn_parent[node];
-        const rd_real_t* S_i = &state->S[node*6];
+        const rd_int_t   sk = chain->s_axis[node];
+        const rd_real_t  sg = chain->s_sign[node];
         rd_int_t vi = algo_vel_index(chain, node);
 
         /*
@@ -601,13 +590,11 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         rd_real_t* pa = &pA[node*6];
 
         if (vi >= 0) {
-            rd_abi_mul(Ia, S_i, &U[node*6]);
-            rd_real_t d = RD_REAL(0.0);
-            for (int k = 0; k < 6; ++k) d += S_i[k] * U[node*6 + k];
+            rd_abi_col(Ia, sk, sg, &U[node*6]);
+            rd_real_t d = sg * U[node*6 + sk];
             if (d <= RD_EPS) return RD_ERR_SINGULAR;
             D[node] = d;
-            u[node] = (tau ? tau[vi] : RD_REAL(0.0));
-            for (int k = 0; k < 6; ++k) u[node] -= S_i[k] * pa[k];
+            u[node] = (tau ? tau[vi] : RD_REAL(0.0)) - sg * pa[sk];
 
             /* Ia -= U D^-1 U^T */
             rd_real_t inv_d = RD_REAL(1.0) / d;
@@ -646,7 +633,6 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         rd_idx_t node   = chain->dyn_order[di];
         rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* Td  = &state->T_dyn[node*16];
-        const rd_real_t* S_i = &state->S[node*6];
         rd_int_t vi = algo_vel_index(chain, node);
 
         /*
@@ -694,9 +680,8 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             for (int k = 0; k < 6; ++k) Ua += U[node*6 + k] * a_p[k];
             rd_real_t qddi = (u[node] - Ua) / D[node];
             qdd_out[vi] = qddi;
-            for (int k = 0; k < 6; ++k) {
-                a[node*6 + k] = a_p[k] + S_i[k]*qddi;
-            }
+            memcpy(&a[node*6], a_p, 6*sizeof(rd_real_t));
+            a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * qddi;
         } else {
             memcpy(&a[node*6], a_p, 6*sizeof(rd_real_t));
         }

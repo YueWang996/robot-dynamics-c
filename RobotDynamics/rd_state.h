@@ -45,7 +45,7 @@ extern "C" {
  * velocity, a joint subspace, a joint velocity); scratch is 62, sized by the
  * largest consumer, which is rd_aba().
  */
-#define RD_STATE_FLOATS_PER_NODE  107
+#define RD_STATE_FLOATS_PER_NODE  101
 
 /** Elements to declare for a statically sized state buffer. */
 #define RD_STATE_BUF_FLOATS(n)    ((n) * RD_STATE_FLOATS_PER_NODE + 16)
@@ -67,7 +67,6 @@ typedef struct {
                                    *   rather than from a parent-to-child chain,
                                    *   so no separate array is needed. */
     rd_real_t* v;                 /**< 6*n, spatial velocity, link body frame */
-    rd_real_t* S;                 /**< 6*n, joint motion subspace */
     rd_real_t* vj;                /**< n, joint velocity. S[i]*vj[i] is the link's
                                     *  velocity relative to its parent, which the
                                     *  dynamics would otherwise recompute with a
@@ -111,7 +110,7 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n_nodes,
  * @brief Compute the shared kinematics for this tick. Call once per control
  *        loop, before any other algorithm.
  *
- * Fills T_dyn, T_world, S and v.
+ * Fills T_dyn, T_world and v.
  *
  * @param q_base   [7] base pose, or NULL to place the base at the identity.
  *                 Ignored for fixed-base models.

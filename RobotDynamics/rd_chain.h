@@ -73,6 +73,13 @@ typedef struct {
      * fixed node's own entry is zero. Total mass and the dynamics are
      * unchanged; the per-link split is not recoverable from here afterwards. Kinematics still walks every node, so every frame keeps its
      * own pose, velocity and Jacobian. */
+    /* The motion subspace, which is always a unit spatial axis: rd_axis_t can
+     * only hold +/-X, +/-Y or +/-Z and the link frame is the joint's child
+     * frame. Two numbers instead of a six-vector, and every I*S product in the
+     * dynamics becomes a column read. */
+    rd_idx_t*  s_axis;             /**< Which of the six components, 0..5 */
+    rd_real_t* s_sign;             /**< Its sign; zero for a node with no DOF */
+
     rd_int_t   n_dyn;              /**< Number of dynamics nodes */
     rd_idx_t*  dyn_order;          /**< n_dyn, topological */
     rd_idx_t*  dyn_parent;         /**< n_nodes, nearest moving ancestor or -1 */

@@ -596,6 +596,61 @@ static RD_INLINE void rd_congruence3_sym_accum(const rd_real_t R[9],
     }
 }
 
+/*
+ * Column extraction.
+ *
+ * rd_axis_t can only hold +/-X, +/-Y or +/-Z, and the link frame is the
+ * joint's child frame, so the motion subspace is always a unit spatial axis:
+ * exactly one component, equal to +/-1. Every I*S product in RNEA, CRBA and ABA
+ * is therefore one column of an inertia, not a matrix-vector product. No test
+ * is needed -- the model type cannot express anything else.
+ */
+static RD_INLINE void rd_abi_col(const rd_real_t* RD_RESTRICT I, int k,
+                                 rd_real_t sgn, rd_real_t* RD_RESTRICT out) {
+    static const int u[9] = {0,1,2, 1,3,4, 2,4,5};
+    static const int w[9] = {15,16,17, 16,18,19, 17,19,20};
+    if (k < 3) {
+        out[0] = sgn * I[u[0*3 + k]];
+        out[1] = sgn * I[u[1*3 + k]];
+        out[2] = sgn * I[u[2*3 + k]];
+        out[3] = sgn * I[6 + k*3 + 0];       /* A21 col k = A12 row k */
+        out[4] = sgn * I[6 + k*3 + 1];
+        out[5] = sgn * I[6 + k*3 + 2];
+    } else {
+        const int j = k - 3;
+        out[0] = sgn * I[6 + 0*3 + j];
+        out[1] = sgn * I[6 + 1*3 + j];
+        out[2] = sgn * I[6 + 2*3 + j];
+        out[3] = sgn * I[w[0*3 + j]];
+        out[4] = sgn * I[w[1*3 + j]];
+        out[5] = sgn * I[w[2*3 + j]];
+    }
+}
+
+/** The same, for a rigid-body inertia in the ten-number {m, h, J} form. */
+static RD_INLINE void rd_rbi_col(const rd_real_t* RD_RESTRICT ic, int k,
+                                 rd_real_t sgn, rd_real_t* RD_RESTRICT out) {
+    const rd_real_t m = ic[0], hx = ic[1], hy = ic[2], hz = ic[3];
+    if (k < 3) {
+        /* top = m e_k, bottom = [h]x e_k */
+        out[0] = (k == 0) ? sgn*m : RD_REAL(0.0);
+        out[1] = (k == 1) ? sgn*m : RD_REAL(0.0);
+        out[2] = (k == 2) ? sgn*m : RD_REAL(0.0);
+        if (k == 0)      { out[3] = RD_REAL(0.0); out[4] =  sgn*hz; out[5] = -sgn*hy; }
+        else if (k == 1) { out[3] = -sgn*hz; out[4] = RD_REAL(0.0); out[5] =  sgn*hx; }
+        else             { out[3] =  sgn*hy; out[4] = -sgn*hx; out[5] = RD_REAL(0.0); }
+    } else {
+        const int j = k - 3;
+        /* top = -[h]x e_j, bottom = J e_j */
+        if (j == 0)      { out[0] = RD_REAL(0.0); out[1] = -sgn*hz; out[2] =  sgn*hy;
+                           out[3] = sgn*ic[4]; out[4] = sgn*ic[7]; out[5] = sgn*ic[8]; }
+        else if (j == 1) { out[0] =  sgn*hz; out[1] = RD_REAL(0.0); out[2] = -sgn*hx;
+                           out[3] = sgn*ic[7]; out[4] = sgn*ic[5]; out[5] = sgn*ic[9]; }
+        else             { out[0] = -sgn*hy; out[1] =  sgn*hx; out[2] = RD_REAL(0.0);
+                           out[3] = sgn*ic[8]; out[4] = sgn*ic[9]; out[5] = sgn*ic[6]; }
+    }
+}
+
 /** accum += Ad(T)^T I Ad(T), all in packed form. Same block algebra as the
  *  6x6 version; A21 comes from A12 transposed and BL is never written. */
 static RD_INLINE void rd_abi_congruence_accum(const rd_real_t* RD_RESTRICT T,
