@@ -240,47 +240,85 @@ static RD_INLINE void rd_mat4_mul_se3(const rd_real_t* RD_RESTRICT A,
  * s_axis and s_sign are the motion subspace the chain already stores -- 3+k
  * for a revolute joint about axis k, k for a prismatic one along it.
  */
+/*
+ * The two shapes a 1-DOF joint's transform can take, with the axis a
+ * compile-time constant. K is the axis, I and J the other two in cyclic order.
+ *
+ * The constant matters more than it looks: vldr and vstr take an immediate
+ * offset and nothing else, so a run-time axis means six live base registers,
+ * one per column touched. In a loop that already has the chain and state
+ * pointers live there are none to spare, and GCC spends seventeen integer
+ * instructions computing those addresses and spilling them, then reloads each
+ * one before its float. With the axis constant every access is an immediate
+ * offset from A or C.
+ */
+#define RD_JOINT_ROT_(K, I, J)                                              \
+    do {                                                                    \
+        C[(K)*4+0] = A[(K)*4+0];                                            \
+        C[(K)*4+1] = A[(K)*4+1];                                            \
+        C[(K)*4+2] = A[(K)*4+2];                                            \
+        for (int r_ = 0; r_ < 3; ++r_) {                                    \
+            const rd_real_t u_ = A[(I)*4+r_], w_ = A[(J)*4+r_];             \
+            C[(I)*4+r_] = c*u_ + s*w_;                                      \
+            C[(J)*4+r_] = c*w_ - s*u_;                                      \
+        }                                                                   \
+    } while (0)
+
+#define RD_JOINT_TRANS_(K)                                                  \
+    do {                                                                    \
+        for (int m_ = 0; m_ < 3; ++m_) {                                    \
+            C[m_*4+0] = A[m_*4+0];                                          \
+            C[m_*4+1] = A[m_*4+1];                                          \
+            C[m_*4+2] = A[m_*4+2];                                          \
+        }                                                                   \
+        t0 += d*A[(K)*4+0]; t1 += d*A[(K)*4+1]; t2 += d*A[(K)*4+2];         \
+    } while (0)
+
+/*
+ * C = A * (the joint's own motion transform), for a 1-DOF joint.
+ *
+ * The joint transform is never general. rd_axis_t admits only +-X, +-Y and
+ * +-Z, so a revolute joint's matrix carries one column of its parent's offset
+ * through untouched and mixes the other two by cos and sin, and a prismatic
+ * joint's is the identity with one column's worth of translation. Building
+ * that 4x4 and running the general compose spends 36 multiplies and 20 stores
+ * rediscovering it. Composing directly is 12 multiplies and no joint matrix.
+ *
+ * s_axis and s_sign are the motion subspace the chain already stores -- 3+k
+ * for a revolute joint about axis k, k for a prismatic one along it.
+ */
 static RD_INLINE void rd_mat4_mul_joint(const rd_real_t* RD_RESTRICT A,
                                         rd_int_t s_axis, rd_real_t s_sign,
                                         rd_real_t q,
                                         rd_real_t* RD_RESTRICT C) {
-    const rd_int_t k = (s_axis >= 3) ? (s_axis - 3) : s_axis;
-    const rd_int_t i = (k == 2) ? 0 : (k + 1);
-    const rd_int_t j = (i == 2) ? 0 : (i + 1);
-
-    rd_real_t s, c;
     rd_real_t t0 = A[12], t1 = A[13], t2 = A[14];
 
     if (s_axis >= 3) {
+        rd_real_t s, c;
         rd_sincos(q, &s, &c);
         s *= s_sign;
+        switch (s_axis) {
+            case 3:  RD_JOINT_ROT_(0, 1, 2); break;
+            case 4:  RD_JOINT_ROT_(1, 2, 0); break;
+            default: RD_JOINT_ROT_(2, 0, 1); break;
+        }
     } else {
-        /* Prismatic: the rotation is the identity, so the column mix below
-         * degenerates to a copy and only the translation moves. */
+        /* Prismatic, and the do-nothing joints, whose sign is zero: the
+         * rotation is the identity and only the translation moves. */
         const rd_real_t d = s_sign * q;
-        t0 += d * A[k*4+0]; t1 += d * A[k*4+1]; t2 += d * A[k*4+2];
-        s = RD_REAL(0.0); c = RD_REAL(1.0);
-    }
-
-    {   /* A rotation about an axis leaves that column of A alone. */
-        const rd_real_t* RD_RESTRICT ak = &A[k*4];
-        rd_real_t* RD_RESTRICT ck = &C[k*4];
-        ck[0] = ak[0]; ck[1] = ak[1]; ck[2] = ak[2];
-    }
-    {   /* The other two mix, by the same 2x2 for every row. */
-        const rd_real_t* RD_RESTRICT ai = &A[i*4];
-        const rd_real_t* RD_RESTRICT aj = &A[j*4];
-        rd_real_t* RD_RESTRICT ci = &C[i*4];
-        rd_real_t* RD_RESTRICT cj = &C[j*4];
-        for (rd_int_t r = 0; r < 3; ++r) {
-            const rd_real_t u = ai[r], w = aj[r];
-            ci[r] = c*u + s*w;
-            cj[r] = c*w - s*u;
+        switch (s_axis) {
+            case 0:  RD_JOINT_TRANS_(0); break;
+            case 1:  RD_JOINT_TRANS_(1); break;
+            default: RD_JOINT_TRANS_(2); break;
         }
     }
+
     C[3] = C[7] = C[11] = RD_REAL(0.0);
     C[12] = t0; C[13] = t1; C[14] = t2; C[15] = RD_REAL(1.0);
 }
+
+#undef RD_JOINT_ROT_
+#undef RD_JOINT_TRANS_
 
 /* Ti = inv(T) for SE3 */
 static RD_INLINE void rd_mat4_inv(const rd_real_t* RD_RESTRICT T,
