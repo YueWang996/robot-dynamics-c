@@ -1,0 +1,52 @@
+# Builds the single-header distribution and attaches it to the release.
+#
+# The source of truth stays the RobotDynamics/ tree; this produces the one file
+# people actually download. --verify compiles the result three ways and
+# compares its Cortex-M4 code against the multi-file build, so a release only
+# happens if the shipped header is the same library.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  single-header:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Arm toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '13.2.Rel1'
+
+      - name: Amalgamate and verify
+        run: |
+          python3 tools/amalgamate.py -o dist/robot_dynamics.h --verify
+        env:
+          RD_ARM_GCC: arm-none-eabi-gcc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: robot_dynamics.h
+          path: dist/robot_dynamics.h
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/robot_dynamics.h
+          body: |
+            Drop `robot_dynamics.h` into your project. In exactly one `.c` file:
+
+            ```c
+            #define RD_IMPLEMENTATION
+            #include "robot_dynamics.h"
+            ```
+
+            and include it plainly everywhere else.
+
+            This file is generated from the tree in this tag and verified to
+            produce byte-identical Cortex-M4 code.

@@ -1,5 +1,7 @@
 # Build directories
 build/
+# Generated single-header, built at release time by tools/amalgamate.py
+dist/
 build-*/
 cmake-build-*/
 

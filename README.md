@@ -6,6 +6,7 @@
 
 C99 · `libm` and nothing else · a 1 kHz torque loop for an 18-DOF quadruped on a $5 board
 
+[![Single header](https://img.shields.io/badge/download-single%20header-brightgreen.svg)](../../releases/latest)
 ![C99](https://img.shields.io/badge/C-99-blue.svg)
 [![Licence](https://img.shields.io/badge/licence-Apache%202.0-green.svg)](LICENSE)
 [![Targets](https://img.shields.io/badge/targets-Cortex--M4F%20|%20M33%20|%20RISC--V-orange.svg)](#speed)
@@ -31,6 +32,7 @@ and mass matrices fast enough to close the loop on the robot itself.
 | **Allocation** | None in the control loop. One caller-provided buffer holds every algorithm's scratch |
 | **Dependencies** | `libm`. That is the whole list |
 | **Footprint** | **24.8 KB** of Cortex-M4 code for the entire library |
+| **Distribution** | One header. Download it from [Releases](../../releases/latest) and copy it in |
 | **Model input** | URDF, through `tools/urdf2c.py` |
 | **Interop** | `q`, `qd`, `qdd` and `tau` use Pinocchio's layout, so vectors pass straight to [bard](https://github.com/YueWang996/bard-pytorch-dynamics) and back |
 
@@ -49,6 +51,17 @@ comes from.
 ---
 
 ## Using it
+
+Download **`robot_dynamics.h`** from
+[Releases](../../releases/latest) and drop it into your project. One file, no
+build system, no submodule. In exactly one `.c` file:
+
+```c
+#define RD_IMPLEMENTATION
+#include "robot_dynamics.h"
+```
+
+and include it plainly everywhere else.
 
 ```c
 #include "robot_dynamics.h"
@@ -73,16 +86,24 @@ for (;;) {
 }
 ```
 
-**Build it:**
+**Working from the source tree** instead — for CMake projects, or to build the
+single header yourself:
 
 ```bash
-cmake -B build && cmake --build build && ./build/rd_test
+git clone <this repo> && cd RobotDynamics
+cmake -B build && cmake --build build && ./build/rd_test   # host smoke test
+python3 tools/amalgamate.py --verify                       # dist/robot_dynamics.h
 ```
 
 ```cmake
 add_subdirectory(RobotDynamics)
 target_link_libraries(my_firmware PRIVATE robot_dynamics)
 ```
+
+`amalgamate.py --verify` compiles the header it just wrote three ways and
+compares its Cortex-M4 code against the multi-file build, function by function.
+The released header is the same library: all 22 public functions come out
+instruction for instruction identical.
 
 **Bring in a robot:**
 
