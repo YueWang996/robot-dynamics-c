@@ -300,6 +300,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
 
     /* The per-node control block the traversals read, gathered once. */
     for (rd_int_t i = 0; i < n; ++i) chain->dyn_slot[i] = -1;
+    chain->n_axis_rot = 0;
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
         rd_idx_t node = chain->dyn_order[di];
         rd_dyn_node_t* d = &chain->dyn[di];
@@ -327,6 +328,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
                 O[4] == RD_REAL(0.0) && O[5] == RD_REAL(1.0) && O[6] == RD_REAL(0.0) &&
                 O[8] == RD_REAL(0.0) && O[9] == RD_REAL(0.0) && O[10] == RD_REAL(1.0)) {
                 d->axis_rot = (rd_idx_t)(chain->s_axis[node] - 3);
+                chain->n_axis_rot++;
             }
         }
         chain->dyn_slot[node] = (rd_idx_t)di;

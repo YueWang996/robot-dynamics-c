@@ -422,6 +422,81 @@ static RD_INLINE void rd_mat6_add(const rd_real_t* A, const rd_real_t* B, rd_rea
     for (int i = 0; i < 36; ++i) C[i] = A[i] + B[i];
 }
 
+/*
+ * out = Rk(c,s) * C * Rk(c,s)^T, for a rotation about coordinate axis k.
+ *
+ * Such a rotation leaves row k and column k of C alone and mixes the other two
+ * by the same 2x2, once on the rows and once on the columns: 24 multiplies
+ * instead of 45, and the rotation is two numbers rather than nine. K is the
+ * axis, I and J the other two -- all three compile-time constants, because a
+ * run-time axis here would need a base register per row touched and cost more
+ * than the multiplies it saves. That mistake was measured once already.
+ */
+#define RD_AXCONG_(K, I, J)                                                 \
+    do {                                                                    \
+        rd_real_t D_[9];                                                    \
+        for (int b_ = 0; b_ < 3; ++b_) {                                    \
+            const rd_real_t ci_ = C[(I)*3+b_], cj_ = C[(J)*3+b_];           \
+            D_[(K)*3+b_] = C[(K)*3+b_];                                     \
+            D_[(I)*3+b_] = c*ci_ - s*cj_;                                   \
+            D_[(J)*3+b_] = s*ci_ + c*cj_;                                   \
+        }                                                                   \
+        for (int a_ = 0; a_ < 3; ++a_) {                                    \
+            const rd_real_t di_ = D_[a_*3+(I)], dj_ = D_[a_*3+(J)];         \
+            out[a_*3+(K)] = D_[a_*3+(K)];                                   \
+            out[a_*3+(I)] = c*di_ - s*dj_;                                  \
+            out[a_*3+(J)] = s*di_ + c*dj_;                                  \
+        }                                                                   \
+    } while (0)
+
+static RD_INLINE void rd_axis_congruence3(rd_int_t k, rd_real_t c, rd_real_t s,
+                                          const rd_real_t* RD_RESTRICT C,
+                                          rd_real_t* RD_RESTRICT out) {
+    switch (k) {
+        case 0:  RD_AXCONG_(0, 1, 2); break;
+        case 1:  RD_AXCONG_(1, 2, 0); break;
+        default: RD_AXCONG_(2, 0, 1); break;
+    }
+}
+
+#undef RD_AXCONG_
+
+/*
+ * The same rotation applied to a symmetric matrix, in and out packed as
+ * {xx, yy, zz, xy, xz, yz}. Fifteen multiplies and six stores, against 24 and
+ * nine for the general form -- worth having separately because the two callers
+ * that carry an inertia never want the three entries symmetry already fixes,
+ * and building the full 3x3 to throw half of it away is most of the cost.
+ */
+#define RD_SYMIDX_(A, B) ((A) == (B) ? (A) : ((A) + (B) == 1 ? 3 :            \
+                                             ((A) + (B) == 2 ? 4 : 5)))
+#define RD_AXCONGS_(K, I, J)                                                  \
+    do {                                                                      \
+        const rd_real_t ki_ = C[RD_SYMIDX_(K,I)], kj_ = C[RD_SYMIDX_(K,J)];   \
+        const rd_real_t ii_ = C[RD_SYMIDX_(I,I)], jj_ = C[RD_SYMIDX_(J,J)];   \
+        const rd_real_t ij_ = C[RD_SYMIDX_(I,J)];                             \
+        const rd_real_t cc_ = c*c, ss_ = s*s, cs_ = c*s, cs2_ = cs_ + cs_;    \
+        out[RD_SYMIDX_(K,K)] = C[RD_SYMIDX_(K,K)];                            \
+        out[RD_SYMIDX_(K,I)] = c*ki_ - s*kj_;                                 \
+        out[RD_SYMIDX_(K,J)] = s*ki_ + c*kj_;                                 \
+        out[RD_SYMIDX_(I,I)] = cc_*ii_ - cs2_*ij_ + ss_*jj_;                  \
+        out[RD_SYMIDX_(J,J)] = ss_*ii_ + cs2_*ij_ + cc_*jj_;                  \
+        out[RD_SYMIDX_(I,J)] = cs_*(ii_ - jj_) + (cc_ - ss_)*ij_;             \
+    } while (0)
+
+static RD_INLINE void rd_axis_congruence3_sym(rd_int_t k, rd_real_t c, rd_real_t s,
+                                              const rd_real_t* RD_RESTRICT C,
+                                              rd_real_t* RD_RESTRICT out) {
+    switch (k) {
+        case 0:  RD_AXCONGS_(0, 1, 2); break;
+        case 1:  RD_AXCONGS_(1, 2, 0); break;
+        default: RD_AXCONGS_(2, 0, 1); break;
+    }
+}
+
+#undef RD_AXCONGS_
+#undef RD_SYMIDX_
+
 /* ============================================================================
  * Compact spatial inertia
  *
@@ -456,46 +531,81 @@ static RD_INLINE void rd_mat6_add(const rd_real_t* A, const rd_real_t* B, rd_rea
  *
  * T is the child expressed in the parent, so unlike the 6x6 congruence this
  * needs no inverse of it.
+ *
+ * axis_k >= 0 says T's rotation is about coordinate axis k and nothing else --
+ * what T_dyn holds whenever a revolute joint's origin carries no rotation.
+ * Then R J R^T costs 24 multiplies instead of 45, R h costs 4 instead of 9,
+ * and R itself is two numbers off T rather than nine.
  */
 static RD_INLINE void rd_rbi_congruence_accum(const rd_real_t* RD_RESTRICT T,
+                                              rd_int_t axis_k,
                                               const rd_real_t* RD_RESTRICT in,
                                               rd_real_t* RD_RESTRICT accum) {
     const rd_real_t m = in[0];
-    const rd_real_t px = T[12], py = T[13], pz = T[14];
-    const rd_real_t R[9] = { T[0], T[4], T[8],
-                             T[1], T[5], T[9],
-                             T[2], T[6], T[10] };
+    const rd_real_t q[3] = { T[12], T[13], T[14] };
 
-    const rd_real_t gx = R[0]*in[1] + R[1]*in[2] + R[2]*in[3];   /* R h */
-    const rd_real_t gy = R[3]*in[1] + R[4]*in[2] + R[5]*in[3];
-    const rd_real_t gz = R[6]*in[1] + R[7]*in[2] + R[8]*in[3];
+    rd_real_t g[3];    /* R h */
+    rd_real_t Jc[6];   /* R J R^T, packed xx yy zz xy xz yz */
+
+    if (axis_k >= 0) {
+        const rd_int_t i = (axis_k == 2) ? 0 : (axis_k + 1);
+        const rd_int_t j = (i == 2) ? 0 : (i + 1);
+        const rd_real_t c = T[i*4 + i], sn = T[i*4 + j];
+        /*
+         * One switch serves both products. The congruence's own switch folds
+         * away because it is reached with a literal, so every subscript here
+         * is a compile-time constant -- which is the whole point. The packing
+         * of in[4..9] is the packing rd_axis_congruence3_sym wants, so J goes
+         * in and Jc comes out with no 3x3 in between.
+         */
+        #define RD_RBI_AX_(K, P, Q)                                             \
+            do {                                                                \
+                g[(K)] = in[1+(K)];                                             \
+                g[(P)] = c*in[1+(P)] - sn*in[1+(Q)];                            \
+                g[(Q)] = sn*in[1+(P)] + c*in[1+(Q)];                            \
+                rd_axis_congruence3_sym((K), c, sn, in + 4, Jc);                \
+            } while (0)
+        switch (axis_k) {
+            case 0:  RD_RBI_AX_(0, 1, 2); break;
+            case 1:  RD_RBI_AX_(1, 2, 0); break;
+            default: RD_RBI_AX_(2, 0, 1); break;
+        }
+        #undef RD_RBI_AX_
+    } else {
+        const rd_real_t R[9] = { T[0], T[4], T[8],
+                                 T[1], T[5], T[9],
+                                 T[2], T[6], T[10] };
+        g[0] = R[0]*in[1] + R[1]*in[2] + R[2]*in[3];
+        g[1] = R[3]*in[1] + R[4]*in[2] + R[5]*in[3];
+        g[2] = R[6]*in[1] + R[7]*in[2] + R[8]*in[3];
+
+        const rd_real_t Jin[9] = { in[4], in[7], in[8],
+                                   in[7], in[5], in[9],
+                                   in[8], in[9], in[6] };
+        rd_real_t RJ[9];
+        rd_mat3_mul(R, Jin, RJ);
+        /* Only the six unique entries of the symmetric result are formed. */
+        #define RD_RBI_J(a,b) (RJ[(a)*3+0]*R[(b)*3+0] + RJ[(a)*3+1]*R[(b)*3+1] \
+                             + RJ[(a)*3+2]*R[(b)*3+2])
+        Jc[0] = RD_RBI_J(0,0); Jc[1] = RD_RBI_J(1,1); Jc[2] = RD_RBI_J(2,2);
+        Jc[3] = RD_RBI_J(0,1); Jc[4] = RD_RBI_J(0,2); Jc[5] = RD_RBI_J(1,2);
+        #undef RD_RBI_J
+    }
 
     accum[0] += m;
-    accum[1] += gx + m*px;
-    accum[2] += gy + m*py;
-    accum[3] += gz + m*pz;
+    accum[1] += g[0] + m*q[0];
+    accum[2] += g[1] + m*q[1];
+    accum[3] += g[2] + m*q[2];
 
-    const rd_real_t J[9] = { in[4], in[7], in[8],
-                             in[7], in[5], in[9],
-                             in[8], in[9], in[6] };
-    rd_real_t RJ[9];
-    rd_mat3_mul(R, J, RJ);
+    const rd_real_t d = RD_REAL(2.0)*(q[0]*g[0] + q[1]*g[1] + q[2]*g[2])
+                      + m*(q[0]*q[0] + q[1]*q[1] + q[2]*q[2]);
 
-    const rd_real_t d = RD_REAL(2.0)*(px*gx + py*gy + pz*gz)
-                      + m*(px*px + py*py + pz*pz);
-
-    /* Only the six unique entries of the symmetric result are formed. */
-    #define RD_RBI_J(i,j) (RJ[(i)*3+0]*R[(j)*3+0] + RJ[(i)*3+1]*R[(j)*3+1] \
-                         + RJ[(i)*3+2]*R[(j)*3+2])
-    const rd_real_t g[3] = { gx, gy, gz };
-    const rd_real_t q[3] = { px, py, pz };
-    accum[4] += RD_RBI_J(0,0) + d - RD_REAL(2.0)*g[0]*q[0] - m*q[0]*q[0];
-    accum[5] += RD_RBI_J(1,1) + d - RD_REAL(2.0)*g[1]*q[1] - m*q[1]*q[1];
-    accum[6] += RD_RBI_J(2,2) + d - RD_REAL(2.0)*g[2]*q[2] - m*q[2]*q[2];
-    accum[7] += RD_RBI_J(0,1) - g[0]*q[1] - q[0]*g[1] - m*q[0]*q[1];
-    accum[8] += RD_RBI_J(0,2) - g[0]*q[2] - q[0]*g[2] - m*q[0]*q[2];
-    accum[9] += RD_RBI_J(1,2) - g[1]*q[2] - q[1]*g[2] - m*q[1]*q[2];
-    #undef RD_RBI_J
+    accum[4] += Jc[0] + d - RD_REAL(2.0)*g[0]*q[0] - m*q[0]*q[0];
+    accum[5] += Jc[1] + d - RD_REAL(2.0)*g[1]*q[1] - m*q[1]*q[1];
+    accum[6] += Jc[2] + d - RD_REAL(2.0)*g[2]*q[2] - m*q[2]*q[2];
+    accum[7] += Jc[3] - g[0]*q[1] - q[0]*g[1] - m*q[0]*q[1];
+    accum[8] += Jc[4] - g[0]*q[2] - q[0]*g[2] - m*q[0]*q[2];
+    accum[9] += Jc[5] - g[1]*q[2] - q[1]*g[2] - m*q[1]*q[2];
 }
 
 /** Expand the ten-number form into a 6x6 block at an arbitrary row stride, so
@@ -799,45 +909,6 @@ static RD_INLINE void rd_rbi_col(const rd_real_t* RD_RESTRICT ic, int k,
                            out[3] = sgn*ic[8]; out[4] = sgn*ic[9]; out[5] = sgn*ic[6]; }
     }
 }
-
-/*
- * out = Rk(c,s) * C * Rk(c,s)^T, for a rotation about coordinate axis k.
- *
- * Such a rotation leaves row k and column k of C alone and mixes the other two
- * by the same 2x2, once on the rows and once on the columns: 24 multiplies
- * instead of 45, and the rotation is two numbers rather than nine. K is the
- * axis, I and J the other two -- all three compile-time constants, because a
- * run-time axis here would need a base register per row touched and cost more
- * than the multiplies it saves. That mistake was measured once already.
- */
-#define RD_AXCONG_(K, I, J)                                                 \
-    do {                                                                    \
-        rd_real_t D_[9];                                                    \
-        for (int b_ = 0; b_ < 3; ++b_) {                                    \
-            const rd_real_t ci_ = C[(I)*3+b_], cj_ = C[(J)*3+b_];           \
-            D_[(K)*3+b_] = C[(K)*3+b_];                                     \
-            D_[(I)*3+b_] = c*ci_ - s*cj_;                                   \
-            D_[(J)*3+b_] = s*ci_ + c*cj_;                                   \
-        }                                                                   \
-        for (int a_ = 0; a_ < 3; ++a_) {                                    \
-            const rd_real_t di_ = D_[a_*3+(I)], dj_ = D_[a_*3+(J)];         \
-            out[a_*3+(K)] = D_[a_*3+(K)];                                   \
-            out[a_*3+(I)] = c*di_ - s*dj_;                                  \
-            out[a_*3+(J)] = s*di_ + c*dj_;                                  \
-        }                                                                   \
-    } while (0)
-
-static RD_INLINE void rd_axis_congruence3(rd_int_t k, rd_real_t c, rd_real_t s,
-                                          const rd_real_t* RD_RESTRICT C,
-                                          rd_real_t* RD_RESTRICT out) {
-    switch (k) {
-        case 0:  RD_AXCONG_(0, 1, 2); break;
-        case 1:  RD_AXCONG_(1, 2, 0); break;
-        default: RD_AXCONG_(2, 0, 1); break;
-    }
-}
-
-#undef RD_AXCONG_
 
 /* out = R * C * R^T, row-major 3x3, for a general rotation. */
 static RD_INLINE void rd_congruence3_rt(const rd_real_t R[9], const rd_real_t C[9],

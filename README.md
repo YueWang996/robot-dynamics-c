@@ -126,15 +126,15 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.4 | **55.3** | 155.2 | 1458.8 | 354.5 |
+| `update_kinematics` | 27.4 | **55.0** | 155.2 | 1458.8 | 354.5 |
 | `rnea` | 51.5 | **100.6** | 125.0 | 1650.3 | 939.4 |
-| `crba` | 60.9 | **126.1** | 234.4 | 2293.0 | 848.9 |
-| `aba` | 181.0 | **331.4** | 399.6 | 4239.1 | 2726.6 |
+| `crba` | 60.9 | **114.9** | 234.4 | 2293.0 | 848.9 |
+| `aba` | 181.0 | **331.7** | 399.6 | 4239.1 | 2726.6 |
 | torque tick | 79 µs<br>12.7 kHz | **156 µs<br>6.4 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | 1294 µs<br>773 Hz |
-| operational space | 140 µs<br>7.2 kHz | **282 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
+| operational space | 140 µs<br>7.2 kHz | **271 µs<br>3.7 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
 
 > The STM32L413 column is the newest. The G474 and ESP32-C6 columns predate the
-> last two changes, worth about 3% on a torque tick, 12% on
+> last three changes, worth about 3% on a torque tick, 9% on `crba`, 12% on
 > `spatial_acceleration` and 11% on `aba`; they will be refreshed when those
 > boards are back on the desk. The two RP2350 columns are the properly stale ones, 2–3x behind.
 
@@ -145,10 +145,10 @@ clock** and be close. What this round bought those two boards, on Go2:
 | | STM32L413 @ 80 MHz | ESP32-C6 @ 160 MHz |
 |---|---|---|
 | `update_kinematics` | 489.5 → 56.9 µs — 8.6x | 1495.0 → 354.5 µs — 4.2x |
-| `crba` | 971.5 → 126.1 µs — 7.7x | 3627.7 → 848.9 µs — 4.3x |
+| `crba` | 971.5 → 114.9 µs — 8.5x | 3627.7 → 848.9 µs — 4.3x |
 | `aba` | 1299.5 → 378.5 µs — 3.4x | 6243.3 → 2726.6 µs — 2.3x |
 | torque tick | 567 → 163 µs — 3.5x | 3819 → 1294 µs — 3.0x |
-| operational space | 1732 → 289 µs — 6.0x | 7447 → 2143 µs — 3.5x |
+| operational space | 1732 → 271 µs — 6.4x | 7447 → 2143 µs — 3.5x |
 
 ### Two forward dynamics, and which to pick
 
@@ -165,9 +165,9 @@ Measured on the STM32L413, `update_kinematics` + the method:
 
 | Robot | nv | ABA | CRBA | |
 |---|---|---|---|---|
-| `spine` | 9, floating base | **122 µs** | 135 µs | ABA −10% |
-| `xarm7` | 7, fixed base | 257 µs | **208 µs** | CRBA −19% |
-| `go2` | 18, floating base | **387 µs** | 462 µs | ABA −16% |
+| `spine` | 9, floating base | **122 µs** | 133 µs | ABA −8% |
+| `xarm7` | 7, fixed base | 258 µs | **205 µs** | CRBA −20% |
+| `go2` | 18, floating base | **387 µs** | 450 µs | ABA −14% |
 
 Two things move the line, and they pull in opposite directions. The solve grows
 as nv³ with nothing to skip — a floating base makes that worse, because its six
@@ -226,6 +226,17 @@ worth 22% of `update_kinematics`. The same effect explains a failure: a
 congruence rewritten to use 24 multiplies instead of 45, indexed by a run-time
 axis, came out **29% slower**. Forty-five multiplies in registers beat 24
 through memory.
+
+**A fast path you never take is not free.** The composite-inertia congruence
+has a cheaper form when a joint's origin carries no rotation, which most URDFs
+give you. Putting both forms in one loop and branching between them made the
+mass matrix 4% *slower* on the one robot that never takes the fast path — not
+because of the branch, which is three instructions, but because two kernels in
+one loop want more registers than the core has, so the general one loses
+several and spends them on moves. The chain counts its axis-aligned joints when
+it is built, and a chain with none runs a loop the other kernel was never
+compiled into. That turned the 4% loss into a 3% gain, and bought half again as
+much for the robots that do take the fast path.
 
 **libc is not free.** Every algorithm clears its output first, and the size is
 only known at run time, so the compiler cannot inline the clear and calls

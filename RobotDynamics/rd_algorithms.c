@@ -612,13 +612,32 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
                RD_INERTIA_COMPACT_LEN * sizeof(rd_real_t));
     }
 
-    /* Inward: composite inertia. Takes the child-in-parent transform directly,
-     * so there is no inverse to form per node. */
-    for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
-        const rd_dyn_node_t* d = &chain->dyn[di];
-        if (d->danc != -1) {
-            rd_rbi_congruence_accum(&state->T_dyn[d->node*16],
-                                    RD_IC(d->node), RD_IC(d->danc));
+    /*
+     * Inward: composite inertia. Takes the child-in-parent transform directly,
+     * so there is no inverse to form per node.
+     *
+     * The two loops differ only in the axis argument, and a chain with no
+     * axis-aligned joint runs the one where it is the literal -1, so the
+     * axis-aligned kernel is not compiled into that loop at all. Leaving it
+     * there to be branched over is not free: it takes registers away from the
+     * general kernel, which then spends them on moves. That was worth 4% of
+     * an xarm7 mass matrix, on a path it never executes.
+     */
+    if (chain->n_axis_rot == 0) {
+        for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+            const rd_dyn_node_t* d = &chain->dyn[di];
+            if (d->danc != -1) {
+                rd_rbi_congruence_accum(&state->T_dyn[d->node*16], -1,
+                                        RD_IC(d->node), RD_IC(d->danc));
+            }
+        }
+    } else {
+        for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+            const rd_dyn_node_t* d = &chain->dyn[di];
+            if (d->danc != -1) {
+                rd_rbi_congruence_accum(&state->T_dyn[d->node*16], d->axis_rot,
+                                        RD_IC(d->node), RD_IC(d->danc));
+            }
         }
     }
 

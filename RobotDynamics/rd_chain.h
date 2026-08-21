@@ -100,6 +100,12 @@ typedef struct {
     rd_real_t* s_sign;             /**< Its sign; zero for a node with no DOF */
 
     rd_int_t   n_dyn;              /**< Number of dynamics nodes */
+    rd_int_t   n_axis_rot;        /**< How many of them have axis_rot >= 0.
+                                   *   Zero lets rd_crba drop the axis-aligned
+                                   *   kernel entirely, which is not merely dead
+                                   *   code to branch over: keeping both kernels
+                                   *   in one loop costs the general one
+                                   *   registers. */
     rd_idx_t*  dyn_order;          /**< n_dyn, topological */
     rd_idx_t*  dyn_parent;         /**< n_nodes, nearest moving ancestor or -1 */
     rd_idx_t*  dyn_child;          /**< n_nodes, CSR values */
