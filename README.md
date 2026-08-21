@@ -126,16 +126,17 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | **27.4** | **56.9** | 155.2 | 1458.8 | **354.5** |
-| `rnea` | **51.5** | **105.8** | 125.0 | 1650.3 | **939.4** |
-| `crba` | **60.9** | **126.1** | 234.4 | 2293.0 | **848.9** |
-| `aba` | **181.0** | **378.5** | 399.6 | 4239.1 | **2726.6** |
-| torque tick | **79 µs<br>12.7 kHz** | **163 µs<br>6.1 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | **1294 µs<br>773 Hz** |
-| operational space | **140 µs<br>7.2 kHz** | **289 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | **2143 µs<br>467 Hz** |
+| `update_kinematics` | 27.4 | **56.8** | 155.2 | 1458.8 | 354.5 |
+| `rnea` | 51.5 | **100.6** | 125.0 | 1650.3 | 939.4 |
+| `crba` | 60.9 | **126.1** | 234.4 | 2293.0 | 848.9 |
+| `aba` | 181.0 | **372.1** | 399.6 | 4239.1 | 2726.6 |
+| torque tick | 79 µs<br>12.7 kHz | **157 µs<br>6.4 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | 1294 µs<br>773 Hz |
+| operational space | 140 µs<br>7.2 kHz | **283 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
 
-> The two RP2350 columns are the only stale ones left; they predate this round
-> of optimisation and are pessimistic by 2–3x on the dynamics and more on CRBA
-> and the Jacobians. The other three were re-measured together.
+> The STM32L413 column is the newest. The G474 and ESP32-C6 columns predate the
+> last change, which is worth about 3% on a torque tick and 12% on
+> `spatial_acceleration`; they will be refreshed when those boards are back on
+> the desk. The two RP2350 columns are the properly stale ones, 2–3x behind.
 
 The two Cortex-M4F parts agree to **within 2.5% on cycles per call** across
 every algorithm (median 0.975), so **another M4F can be scaled from these by
