@@ -11,6 +11,12 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+# Creating the release needs write access to repository contents. The default
+# token is read-only on repositories configured that way, and the dispatch run
+# never noticed because its release step is gated on a tag.
+permissions:
+  contents: write
+
 jobs:
   single-header:
     runs-on: ubuntu-latest
