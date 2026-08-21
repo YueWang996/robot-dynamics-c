@@ -121,6 +121,10 @@ static int algo_solve6_spd(const rd_real_t A[36], const rd_real_t b[6], rd_real_
     rd_real_t L[36];
     memcpy(L, A, 36*sizeof(rd_real_t));
 
+    /* The reciprocal of each diagonal, kept from the factorisation: a divide
+     * is 14 cycles on an FPv4-SP and both substitutions want the same six. */
+    rd_real_t dinv[6];
+
     for (int j = 0; j < 6; ++j) {
         rd_real_t d = L[j*6 + j];
         for (int k = 0; k < j; ++k) d -= L[j*6 + k] * L[j*6 + k];
@@ -128,6 +132,7 @@ static int algo_solve6_spd(const rd_real_t A[36], const rd_real_t b[6], rd_real_
         d = rd_sqrt(d);
         L[j*6 + j] = d;
         rd_real_t inv = RD_REAL(1.0) / d;
+        dinv[j] = inv;
         for (int i = j + 1; i < 6; ++i) {
             rd_real_t s = L[i*6 + j];
             for (int k = 0; k < j; ++k) s -= L[i*6 + k] * L[j*6 + k];
@@ -140,13 +145,13 @@ static int algo_solve6_spd(const rd_real_t A[36], const rd_real_t b[6], rd_real_
     for (int i = 0; i < 6; ++i) {
         rd_real_t s = b[i];
         for (int k = 0; k < i; ++k) s -= L[i*6 + k] * y[k];
-        y[i] = s / L[i*6 + i];
+        y[i] = s * dinv[i];
     }
     /* back substitution: L^T x = y */
     for (int i = 5; i >= 0; --i) {
         rd_real_t s = y[i];
         for (int k = i + 1; k < 6; ++k) s -= L[k*6 + i] * x[k];
-        x[i] = s / L[i*6 + i];
+        x[i] = s * dinv[i];
     }
     return 0;
 }
@@ -529,11 +534,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
 
     rd_idx_t root = chain->topo_order[0];
     if (chain->has_floating_base) {
-        rd_real_t M6[36];
-        rd_rbi_to_mat6(RD_IC(root), M6);
-        for (int r = 0; r < 6; ++r)
-            for (int c = 0; c < 6; ++c)
-                M_out[r*nv + c] = M6[r*6 + c];
+        rd_rbi_to_mat6_stride(RD_IC(root), M_out, nv);
     }
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
@@ -541,25 +542,21 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
         rd_int_t col = algo_vel_index(chain, node);
         if (col < 0) continue;
 
-        rd_real_t F[6];
-        rd_rbi_col(RD_IC(node), chain->s_axis[node], chain->s_sign[node], F);
-        M_out[col*nv + col] = chain->s_sign[node] * F[chain->s_axis[node]];
-
         /*
          * Walk the parent chain once, filling both the joint-joint couplings
-         * and, on reaching the root, the floating-base coupling. The previous
-         * version walked it twice for floating-base models.
+         * and, on reaching the root, the floating-base coupling. The force
+         * moves up in place: each step overwrites the frame it came from.
          */
         rd_real_t f_prop[6];
-        memcpy(f_prop, F, 6*sizeof(rd_real_t));
+        rd_rbi_col(RD_IC(node), chain->s_axis[node], chain->s_sign[node], f_prop);
+        M_out[col*nv + col] = chain->s_sign[node] * f_prop[chain->s_axis[node]];
+
         rd_idx_t curr = node;
         for (;;) {
             rd_idx_t par = chain->dyn_parent[curr];
             if (par == -1) break;
 
-            rd_real_t f_new[6];
-            rd_spatial_transform_force(&state->T_dyn[curr*16], f_prop, f_new);
-            memcpy(f_prop, f_new, 6*sizeof(rd_real_t));
+            rd_spatial_transform_force_inplace(&state->T_dyn[curr*16], f_prop);
             curr = par;
 
             rd_int_t par_col = algo_vel_index(chain, curr);
@@ -652,17 +649,14 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             rd_real_t inv_d = RD_REAL(1.0) / d;
             rd_abi_rank1_sub(Ia, &U[node*6], inv_d);
             /* pa += Ia c + U D^-1 u */
-            rd_real_t Iac[6];
-            rd_abi_mul(Ia, &c[node*6], Iac);
+            rd_abi_mul_accum(Ia, &c[node*6], pa);
             rd_real_t ud = u[node] * inv_d;
-            for (int k = 0; k < 6; ++k) pa[k] += Iac[k] + U[node*6 + k] * ud;
+            for (int k = 0; k < 6; ++k) pa[k] += U[node*6 + k] * ud;
         } else {
             D[node] = RD_REAL(0.0);
             u[node] = RD_REAL(0.0);
             /* A rigid connection: c is zero, so pa is unchanged. */
-            rd_real_t Iac[6];
-            rd_abi_mul(Ia, &c[node*6], Iac);
-            for (int k = 0; k < 6; ++k) pa[k] += Iac[k];
+            rd_abi_mul_accum(Ia, &c[node*6], pa);
         }
 
         if (parent != -1) {

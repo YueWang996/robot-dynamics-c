@@ -385,25 +385,27 @@ static RD_INLINE void rd_rbi_congruence_accum(const rd_real_t* RD_RESTRICT T,
     #undef RD_RBI_J
 }
 
-/** Expand the ten-number form into a full 6x6, row-major. */
-static RD_INLINE void rd_rbi_to_mat6(const rd_real_t* RD_RESTRICT in,
-                                     rd_real_t* RD_RESTRICT M) {
+/** Expand the ten-number form into a 6x6 block at an arbitrary row stride, so
+ *  the mass matrix's base block can be written where it belongs rather than
+ *  into a 36-float temporary and copied. Every entry is written, zeros
+ *  included, so the destination need not be cleared first. */
+static RD_INLINE void rd_rbi_to_mat6_stride(const rd_real_t* RD_RESTRICT in,
+                                            rd_real_t* RD_RESTRICT M, rd_int_t s) {
     const rd_real_t m = in[0], hx = in[1], hy = in[2], hz = in[3];
-    for (int i = 0; i < 36; ++i) M[i] = RD_REAL(0.0);
-    M[0] = m; M[7] = m; M[14] = m;
     const rd_real_t hs[9] = { RD_REAL(0.0), -hz, hy,
                               hz, RD_REAL(0.0), -hx,
                               -hy, hx, RD_REAL(0.0) };
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            M[r*6 + (c+3)] = -hs[r*3 + c];
-            M[(r+3)*6 + c] =  hs[r*3 + c];
+    for (rd_int_t r = 0; r < 3; ++r) {
+        for (rd_int_t c = 0; c < 3; ++c) {
+            M[r*s + c]         = (r == c) ? m : RD_REAL(0.0);
+            M[r*s + (c+3)]     = -hs[r*3 + c];
+            M[(r+3)*s + c]     =  hs[r*3 + c];
         }
     }
-    M[21] = in[4]; M[28] = in[5]; M[35] = in[6];
-    M[22] = M[27] = in[7];
-    M[23] = M[33] = in[8];
-    M[29] = M[34] = in[9];
+    M[3*s+3] = in[4]; M[4*s+4] = in[5]; M[5*s+5] = in[6];
+    M[3*s+4] = M[4*s+3] = in[7];
+    M[3*s+5] = M[5*s+3] = in[8];
+    M[4*s+5] = M[5*s+4] = in[9];
 }
 
 static RD_INLINE void rd_spatial_inertia_mul(const rd_real_t* RD_RESTRICT ic,
@@ -572,6 +574,21 @@ static RD_INLINE void rd_abi_mul(const rd_real_t* RD_RESTRICT I,
     out[5] = I[8]*a + I[11]*b + I[14]*c + I[17]*d + I[19]*e + I[20]*f;
 }
 
+/** acc += I * v. The bias force is always accumulated, never assigned, so the
+ *  six-float result never has to exist. */
+static RD_INLINE void rd_abi_mul_accum(const rd_real_t* RD_RESTRICT I,
+                                       const rd_real_t* RD_RESTRICT v,
+                                       rd_real_t* RD_RESTRICT acc) {
+    const rd_real_t a = v[0], b = v[1], c = v[2];
+    const rd_real_t d = v[3], e = v[4], f = v[5];
+    acc[0] += I[0]*a + I[1]*b + I[2]*c  + I[6]*d  + I[7]*e  + I[8]*f;
+    acc[1] += I[1]*a + I[3]*b + I[4]*c  + I[9]*d  + I[10]*e + I[11]*f;
+    acc[2] += I[2]*a + I[4]*b + I[5]*c  + I[12]*d + I[13]*e + I[14]*f;
+    acc[3] += I[6]*a + I[9]*b + I[12]*c + I[15]*d + I[16]*e + I[17]*f;
+    acc[4] += I[7]*a + I[10]*b + I[13]*c + I[16]*d + I[18]*e + I[19]*f;
+    acc[5] += I[8]*a + I[11]*b + I[14]*c + I[17]*d + I[19]*e + I[20]*f;
+}
+
 /** I -= (U U^T) * inv_d, the articulated-body rank-1 downdate. */
 static RD_INLINE void rd_abi_rank1_sub(rd_real_t* RD_RESTRICT I,
                                        const rd_real_t* RD_RESTRICT U,
@@ -587,19 +604,17 @@ static RD_INLINE void rd_abi_rank1_sub(rd_real_t* RD_RESTRICT I,
     I[18] -= u4*U[4]; I[19] -= u4*U[5]; I[20] -= u5*U[5];
 }
 
-/** Expand to a full row-major 6x6, for the floating base's 6x6 solve. */
+/** Expand to a full row-major 6x6, for the floating base's 6x6 solve. Written
+ *  out rather than looped over index tables: the subscripts are constants, and
+ *  a loop turns each of them into an integer load. */
 static RD_INLINE void rd_abi_to_mat6(const rd_real_t* RD_RESTRICT I,
                                      rd_real_t* RD_RESTRICT M) {
-    const int u[9] = {0,1,2, 1,3,4, 2,4,5};
-    const int w[9] = {15,16,17, 16,18,19, 17,19,20};
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            M[i*6 + j]           = I[u[i*3+j]];
-            M[i*6 + 3 + j]       = I[6 + i*3 + j];
-            M[(i+3)*6 + j]       = I[6 + j*3 + i];
-            M[(i+3)*6 + 3 + j]   = I[w[i*3+j]];
-        }
-    }
+    M[0] =I[0]; M[1] =I[1];  M[2] =I[2];  M[3] =I[6];  M[4] =I[7];  M[5] =I[8];
+    M[6] =I[1]; M[7] =I[3];  M[8] =I[4];  M[9] =I[9];  M[10]=I[10]; M[11]=I[11];
+    M[12]=I[2]; M[13]=I[4];  M[14]=I[5];  M[15]=I[12]; M[16]=I[13]; M[17]=I[14];
+    M[18]=I[6]; M[19]=I[9];  M[20]=I[12]; M[21]=I[15]; M[22]=I[16]; M[23]=I[17];
+    M[24]=I[7]; M[25]=I[10]; M[26]=I[13]; M[27]=I[16]; M[28]=I[18]; M[29]=I[19];
+    M[30]=I[8]; M[31]=I[11]; M[32]=I[14]; M[33]=I[17]; M[34]=I[19]; M[35]=I[20];
 }
 
 /** dst += the six unique entries of R^T C R, for symmetric C. */
@@ -881,6 +896,29 @@ static RD_INLINE void rd_spatial_transform_motion_inv(const rd_real_t* RD_RESTRI
     v_out[3] = T[0]*wx + T[1]*wy + T[2]*wz;
     v_out[4] = T[4]*wx + T[5]*wy + T[6]*wz;
     v_out[5] = T[8]*wx + T[9]*wy + T[10]*wz;
+}
+
+/* The same, in place. CRBA's inner walk carries one force up the ancestry and
+ * has no use for the previous value, so a separate destination is a six-float
+ * temporary and a copy per step. */
+static RD_INLINE void rd_spatial_transform_force_inplace(const rd_real_t* RD_RESTRICT T,
+                                                         rd_real_t* RD_RESTRICT f) {
+    rd_real_t fx = f[0], fy = f[1], fz = f[2];
+    rd_real_t tx = f[3], ty = f[4], tz = f[5];
+
+    rd_real_t f_rot_x = T[0]*fx + T[4]*fy + T[8]*fz;
+    rd_real_t f_rot_y = T[1]*fx + T[5]*fy + T[9]*fz;
+    rd_real_t f_rot_z = T[2]*fx + T[6]*fy + T[10]*fz;
+
+    rd_real_t t_rot_x = T[0]*tx + T[4]*ty + T[8]*tz;
+    rd_real_t t_rot_y = T[1]*tx + T[5]*ty + T[9]*tz;
+    rd_real_t t_rot_z = T[2]*tx + T[6]*ty + T[10]*tz;
+
+    rd_real_t px = T[12], py = T[13], pz = T[14];
+    f[0] = f_rot_x; f[1] = f_rot_y; f[2] = f_rot_z;
+    f[3] = t_rot_x + (py*f_rot_z - pz*f_rot_y);
+    f[4] = t_rot_y + (pz*f_rot_x - px*f_rot_z);
+    f[5] = t_rot_z + (px*f_rot_y - py*f_rot_x);
 }
 
 /* The same, accumulated. Every caller in the library adds the transformed
