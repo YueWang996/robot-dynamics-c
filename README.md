@@ -94,15 +94,15 @@ at 170 MHz:
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
-| `update_kinematics` | 8.86 | 12.14 | 23.58 | 38.59 |
-| `fk_frame` | 7.96 | 10.41 | 19.69 | 11.63 |
-| `jacobian_world` | 6.29 | 10.61 | 15.04 | 12.24 |
-| `jacobian_local` | 8.72 | 16.99 | 21.90 | 19.85 |
-| `rnea` | 14.04 | 18.24 | 32.27 | 51.43 |
-| `aba` | n/a | 56.43 | 103.66 | 179.88 |
-| `crba` | 10.43 | 18.70 | 40.51 | 60.95 |
-| `gravity` | 9.79 | 12.62 | 22.04 | 34.49 |
-| `spatial_acceleration` | 8.41 | 10.41 | 18.68 | 22.84 |
+| `update_kinematics` | 7.28 | 10.79 | 18.81 | 30.19 |
+| `fk_frame` | 7.18 | 9.55 | 18.26 | 10.64 |
+| `jacobian_world` | 6.29 | 10.65 | 15.05 | 12.28 |
+| `jacobian_local` | 8.73 | 16.88 | 21.95 | 19.91 |
+| `rnea` | 14.04 | 18.25 | 32.28 | 51.44 |
+| `aba` | n/a | 56.67 | 103.82 | 179.97 |
+| `crba` | 10.32 | 18.62 | 40.49 | 60.86 |
+| `gravity` | 9.80 | 12.64 | 22.05 | 34.50 |
+| `spatial_acceleration` | 8.38 | 10.35 | 18.68 | 22.82 |
 | `spatial_velocity` | 3.08 | 3.75 | 7.00 | 4.68 |
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
@@ -112,9 +112,9 @@ What that buys per control tick on the same part:
 
 | Robot | dof | Torque tick | Operational space | Forward dynamics |
 |---|---|---|---|---|
-| `spine` | 9 | 30 µs — 32.9 kHz | 49 µs — 20.4 kHz | 69 µs — 14.6 kHz |
-| `xarm7` | 7 | 56 µs — 17.9 kHz | 96 µs — 10.4 kHz | 127 µs — 7.9 kHz |
-| `go2` | 18 | 90 µs — 11.1 kHz | 151 µs — 6.6 kHz | 219 µs — 4.6 kHz |
+| `spine` | 9 | 29 µs — 34.4 kHz | 48 µs — 21.0 kHz | 67 µs — 14.8 kHz |
+| `xarm7` | 7 | 51 µs — 19.6 kHz | 92 µs — 10.9 kHz | 123 µs — 8.2 kHz |
+| `go2` | 18 | 82 µs — 12.3 kHz | 142 µs — 7.0 kHz | 210 µs — 4.8 kHz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
 forward dynamics is `update_kinematics` + `aba`.
@@ -124,12 +124,12 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M33 @ 150<br><sub>RP2350</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | **38.6** | 155.2 | 489.5 | 1458.8 | 1495.0 |
+| `update_kinematics` | **30.2** | 155.2 | 489.5 | 1458.8 | 1495.0 |
 | `rnea` | **51.4** | 125.0 | 270.7 | 1650.3 | 2324.4 |
-| `crba` | **61.0** | 234.4 | 971.5 | 2293.0 | 3627.7 |
-| `aba` | **179.9** | 399.6 | 1299.5 | 4239.1 | 6243.3 |
-| torque tick | **90 µs<br>11.1 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | **151 µs<br>6.6 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| `crba` | **60.9** | 234.4 | 971.5 | 2293.0 | 3627.7 |
+| `aba` | **180.0** | 399.6 | 1299.5 | 4239.1 | 6243.3 |
+| torque tick | **82 µs<br>12.3 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
+| operational space | **142 µs<br>7.0 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
 
 > Only the STM32G474 column is current. The others predate this round of
 > optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
@@ -151,6 +151,9 @@ from the fetch. Go2:
 | `crba` | 61.0 µs | 60.4 µs | −0.9% |
 | `aba` | 179.9 µs | 142.1 µs | −21.0% |
 | forward dynamics | 218.5 µs | 175.3 µs | −19.8% |
+
+(measured before `update_kinematics` lost its address spilling, so its share
+here is the older, larger figure; ABA is unchanged by that work.)
 
 RNEA's and CRBA's loop bodies already fit that cache; ABA's is four times too
 big. **If your part has tightly-coupled memory, put the dynamics code in it** —
@@ -213,7 +216,7 @@ target_link_libraries(my_firmware PRIVATE robot_dynamics)
 |---|---|---|
 | `RD_SINGLE_PRECISION` | `ON` | `float` rather than `double` for `rd_real_t` |
 | `RD_CMSIS_DSP` | `OFF` | Use CMSIS-DSP for `sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR`. Not for trigonometry — its table lookup is slower than `RD_FAST_TRIG` and 285× less accurate |
-| `RD_FAST_TRIG` | `ON` | Polynomial `sin`/`cos`: 57 cycles per pair against libm's 274 on Cortex-M4F, at the same float32 accuracy. Turn off for libm's |
+| `RD_FAST_TRIG` | `ON` | Polynomial `sin`/`cos`: 169 cycles per pair against libm's 521, measured inside `update_kinematics` on an STM32G474, at the same float32 accuracy. Worth 45% of that function on Go2. Turn off for libm's |
 | `RD_STATIC_ALLOC` | `OFF` | No `malloc` (see limitations) |
 | `RD_OPTIMIZE_SIZE` | `OFF` | `-Os` rather than `-O3 -ffast-math` |
 | `RD_ENABLE_DEBUG` | `OFF` | Assertion and log output |

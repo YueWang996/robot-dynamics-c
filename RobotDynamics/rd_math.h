@@ -54,11 +54,17 @@ extern "C" {
     static RD_INLINE rd_real_t rd_atan2(rd_real_t y, rd_real_t x) { return atan2(y, x); }
 #endif
 
-/* One angle, both functions. Cortex-M4F cycles for a (sin, cos) pair, and
- * worst-case absolute error against double-precision libm over [-pi, pi]:
+/* One angle, both functions. Cycles for a (sin, cos) pair measured in situ on
+ * an STM32G474 at 170 MHz -- inside rd_update_kinematics, not in a loop that
+ * keeps the coefficients hot -- and worst-case absolute error against
+ * double-precision libm over [-pi, pi]:
  *
- *     sinf + cosf     273.6 cyc   5.9e-08    default
- *     RD_FAST_TRIG     57.3 cyc   6.6e-08
+ *     sinf + cosf     521 cyc   5.9e-08
+ *     RD_FAST_TRIG    169 cyc   6.6e-08    default
+ *
+ * 76 of those 169 are the flash: the polynomial's ten coefficients are
+ * literal-pool loads, and the G474's ART data cache is 128 bytes. From CCM
+ * SRAM the pair costs 93. Worth 45% of rd_update_kinematics on Go2.
  *
  * Two alternatives are worse and should not be reached for: newlib's sincosf
  * is 313.4 cyc because it is `bl sinf; bl cosf` plus stack shuffling rather
@@ -66,7 +72,7 @@ extern "C" {
  * 1.9e-05, interpolating linearly between 512 table entries and giving up
  * accuracy float32 can resolve.
  *
- * RD_FAST_TRIG is on by default; set it to 0 for libm's exact results. */
+ * RD_FAST_TRIG is on by default; set it to 0 for libm's results. */
 #if RD_FAST_TRIG && RD_REAL_IS_FLOAT
 /* Cody-Waite reduction onto [-pi/4, pi/4] plus a quadrant, then Taylor series
  * carried far enough that the truncation error sits under a float32 ULP. Joint

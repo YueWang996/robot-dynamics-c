@@ -162,19 +162,19 @@ STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
 | | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) |
 |---|---|---|---|
-| `update_kinematics` | 12.1 | 23.6 | 38.6 |
-| `rnea` | 18.2 | 32.3 | 51.4 |
-| `crba` | 18.7 | 40.5 | 61.0 |
-| `aba` | 56.4 | 103.7 | 179.9 |
-| `jacobian_world` | 10.6 | 15.0 | 12.2 |
+| `update_kinematics` | 10.8 | 18.8 | 30.2 |
+| `rnea` | 18.3 | 32.3 | 51.4 |
+| `crba` | 18.6 | 40.5 | 60.9 |
+| `aba` | 56.7 | 103.8 | 180.0 |
+| `jacobian_world` | 10.7 | 15.1 | 12.3 |
 
 Control-loop budgets on that part:
 
 | | spine | xarm7 | go2 |
 |---|---|---|---|
-| torque `update + rnea` | 30 µs / 32.9 kHz | 56 µs / 17.9 kHz | 90 µs / 11.1 kHz |
-| operational space `+ crba` | 49 µs / 20.4 kHz | 96 µs / 10.4 kHz | 151 µs / 6.6 kHz |
-| forward dynamics `update + aba` | 69 µs / 14.6 kHz | 127 µs / 7.9 kHz | 219 µs / 4.6 kHz |
+| torque `update + rnea` | 29 µs / 34.4 kHz | 51 µs / 19.6 kHz | 82 µs / 12.3 kHz |
+| operational space `+ crba` | 48 µs / 21.0 kHz | 92 µs / 10.9 kHz | 142 µs / 7.0 kHz |
+| forward dynamics `update + aba` | 67 µs / 14.8 kHz | 123 µs / 8.2 kHz | 210 µs / 4.8 kHz |
 
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
@@ -231,8 +231,17 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
 - **There is no separate link offset.** The link frame *is* the joint's child
   frame, so the motion subspace is the joint twist itself and `rd_axis_t` can
   only hold ±X/±Y/±Z. Anything assuming a link-offset transform is out of date.
-- **libm is worth ~12% of `update_kinematics`**, and `RD_FAST_TRIG` is on by
-  default now.
+- **`RD_FAST_TRIG` is worth 45% of `update_kinematics`** on Go2 and is on by
+  default: 169 cycles per (sin, cos) pair against libm's 521, measured in situ
+  on the G474. 76 of those 169 are the polynomial's coefficients coming out of
+  the flash literal pool.
+- **Run-time subscripts are expensive out of proportion to their arithmetic.**
+  `vldr`/`vstr` take an immediate offset and nothing else, so indexing a matrix
+  column by a run-time axis needs one live base register per column, and in
+  these loops there are none spare -- GCC spills the addresses and reloads
+  them. Switching on the axis so the subscripts are constants was worth 22% of
+  `update_kinematics`, and the same effect is why a "cheaper" congruence
+  indexed by a run-time axis came out 29% *slower*.
   Flash wait states cost `update_kinematics` ~50% on Cortex-M4F against 2% for
   `rnea`, but that is code footprint missing in the instruction cache, not the
   libm calls — removing them recovers only ~13% of the penalty.
