@@ -126,16 +126,16 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.4 | **55.0** | 155.2 | 1458.8 | 354.5 |
+| `update_kinematics` | 27.4 | **55.5** | 155.2 | 1458.8 | 354.5 |
 | `rnea` | 51.5 | **100.6** | 125.0 | 1650.3 | 939.4 |
-| `crba` | 60.9 | **114.9** | 234.4 | 2293.0 | 848.9 |
-| `aba` | 181.0 | **331.7** | 399.6 | 4239.1 | 2726.6 |
+| `crba` | 60.9 | **113.3** | 234.4 | 2293.0 | 848.9 |
+| `aba` | 181.0 | **327.1** | 399.6 | 4239.1 | 2726.6 |
 | torque tick | 79 µs<br>12.7 kHz | **156 µs<br>6.4 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | 1294 µs<br>773 Hz |
-| operational space | 140 µs<br>7.2 kHz | **271 µs<br>3.7 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
+| operational space | 140 µs<br>7.2 kHz | **269 µs<br>3.7 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
 
 > The STM32L413 column is the newest. The G474 and ESP32-C6 columns predate the
-> last three changes, worth about 3% on a torque tick, 9% on `crba`, 12% on
-> `spatial_acceleration` and 11% on `aba`; they will be refreshed when those
+> last four changes, worth about 3% on a torque tick, 10% on `crba`, 12% on
+> `spatial_acceleration` and 12% on `aba`; they will be refreshed when those
 > boards are back on the desk. The two RP2350 columns are the properly stale ones, 2–3x behind.
 
 The two Cortex-M4F parts agree to **within 2.5% on cycles per call** across
@@ -144,11 +144,11 @@ clock** and be close. What this round bought those two boards, on Go2:
 
 | | STM32L413 @ 80 MHz | ESP32-C6 @ 160 MHz |
 |---|---|---|
-| `update_kinematics` | 489.5 → 56.9 µs — 8.6x | 1495.0 → 354.5 µs — 4.2x |
-| `crba` | 971.5 → 114.9 µs — 8.5x | 3627.7 → 848.9 µs — 4.3x |
-| `aba` | 1299.5 → 378.5 µs — 3.4x | 6243.3 → 2726.6 µs — 2.3x |
-| torque tick | 567 → 163 µs — 3.5x | 3819 → 1294 µs — 3.0x |
-| operational space | 1732 → 271 µs — 6.4x | 7447 → 2143 µs — 3.5x |
+| `update_kinematics` | 489.5 → 55.5 µs — 8.8x | 1495.0 → 354.5 µs — 4.2x |
+| `crba` | 971.5 → 113.3 µs — 8.6x | 3627.7 → 848.9 µs — 4.3x |
+| `aba` | 1299.5 → 327.1 µs — 4.0x | 6243.3 → 2726.6 µs — 2.3x |
+| torque tick | 567 → 156 µs — 3.6x | 3819 → 1294 µs — 3.0x |
+| operational space | 1732 → 269 µs — 6.4x | 7447 → 2143 µs — 3.5x |
 
 ### Two forward dynamics, and which to pick
 
@@ -166,8 +166,8 @@ Measured on the STM32L413, `update_kinematics` + the method:
 | Robot | nv | ABA | CRBA | |
 |---|---|---|---|---|
 | `spine` | 9, floating base | **122 µs** | 133 µs | ABA −8% |
-| `xarm7` | 7, fixed base | 258 µs | **205 µs** | CRBA −20% |
-| `go2` | 18, floating base | **387 µs** | 450 µs | ABA −14% |
+| `xarm7` | 7, fixed base | 256 µs | **206 µs** | CRBA −20% |
+| `go2` | 18, floating base | **383 µs** | 449 µs | ABA −15% |
 
 Two things move the line, and they pull in opposite directions. The solve grows
 as nv³ with nothing to skip — a floating base makes that worse, because its six
