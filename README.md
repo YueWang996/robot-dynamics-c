@@ -135,6 +135,34 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 > optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
 > that on CRBA and the Jacobians.
 
+### Where the remaining time goes
+
+At 170 MHz the G474's flash needs four wait states, and the ART accelerator's
+instruction cache is 1 KB — smaller than `rd_aba`'s inner loop, so that loop is
+re-fetched from flash every iteration. Running the same binary with the
+library's code in the part's CCM SRAM instead, which is on the I-Code bus at
+zero wait states (`make CCMBENCH=1` in `benchmark/stm32g4`), separates the core
+from the fetch. Go2:
+
+| | flash, 4 WS | CCM SRAM | |
+|---|---|---|---|
+| `update_kinematics` | 38.6 µs | 33.3 µs | −13.8% |
+| `rnea` | 51.4 µs | 50.1 µs | −2.6% |
+| `crba` | 61.0 µs | 60.4 µs | −0.9% |
+| `aba` | 179.9 µs | 142.1 µs | −21.0% |
+| forward dynamics | 218.5 µs | 175.3 µs | −19.8% |
+
+RNEA's and CRBA's loop bodies already fit that cache; ABA's is four times too
+big. **If your part has tightly-coupled memory, put the dynamics code in it** —
+on this one that is worth more than anything left in the source. The tables
+above are measured from flash, so they stay comparable with the boards that
+have no such memory.
+
+Against a 16 MHz build where the flash needs no wait states at all
+(`make ZEROWS=1`), the CCM figures come within 2.5%: at zero wait states this
+code issues about one instruction per cycle, so there is no pipeline stall left
+for hand-written assembly to remove.
+
 **Run dynamics on a core with a hardware FPU.** Without one the library is
 10–20× slower, which is a part-selection decision rather than something to
 optimise around: for a quadruped, a Hazard3 or C3/C6/H2 class core is not a

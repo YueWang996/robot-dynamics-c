@@ -20,6 +20,8 @@
 # and neither is how you would ship:
 #
 #   make ZEROWS=1    HSI16 at 16 MHz, where flash needs zero wait states
+#   make CCMBENCH=1  the library's hot code in CCM SRAM, on the I-Code bus at
+#                    zero wait states. 170 MHz otherwise unchanged.
 #   make RAM=1       link the image to SRAM and load it with the debugger.
 #                    Slower: on Cortex-M4 SRAM at 0x20000000 is reached over
 #                    the System bus, so instruction fetch contends with data
@@ -61,6 +63,14 @@ CFLAGS += $(EXTRA)
 LDFLAGS := $(CPU) -T$(LDSCRIPT) -Wl,--gc-sections -Wl,-Map=rd_bench.map \
            --specs=nano.specs --specs=rdimon.specs -lc -lrdimon -lm -u _printf_float
 
+# CCMBENCH=1 runs the library's hot code out of the G474's 32 KB CCM SRAM,
+# which is on the I-Code bus and takes no wait states. Worth 21% on rd_aba at
+# 170 MHz -- see ccm.ld. A characterisation option, not how the library ships:
+# most parts have no tightly-coupled memory, so results/ is captured from flash.
+ifeq ($(CCMBENCH),1)
+  CFLAGS += -DBENCH_G4_CCM=1
+endif
+
 SRCS := main.c startup_glue.c \
         $(BENCH)/bench_main.c \
         $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
@@ -70,6 +80,10 @@ all: rd_bench.elf
 
 $(LDSCRIPT):
 	cp $(CUBE)/Projects/STM32G474E-EVAL1/Templates/STM32CubeIDE/STM32G474RETX_FLASH.ld $@
+ifeq ($(CCMBENCH),1)
+	sed '/The program code and other data into "ROM"/r ccm.ld' $@ > $@.tmp && mv $@.tmp $@
+	grep -q _sccmram $@ || (echo "ccm.ld not spliced -- linker script layout changed"; exit 1)
+endif
 
 rd_bench.elf: $(SRCS) $(ASRC) $(LDSCRIPT)
 	$(TC)-gcc $(CFLAGS) $(SRCS) $(ASRC) $(LDFLAGS) -o $@

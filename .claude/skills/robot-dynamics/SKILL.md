@@ -185,6 +185,25 @@ numbers in `benchmark/results/` predate this round of optimisation and are
 pessimistic by 2–3x on the dynamics and by more on CRBA and the Jacobians. Say
 so rather than quoting them as current.
 
+**Instruction fetch, not the core.** On an STM32G474 at 170 MHz the flash needs
+four wait states and the ART instruction cache is 1 KB. Measured by running the
+same code from CCM SRAM (`make CCMBENCH=1`) and at 16 MHz with zero wait states
+(`make ZEROWS=1`):
+
+- `rd_aba` pays **21%** to instruction fetch, `rd_update_kinematics` 14%,
+  `rnea` and `crba` under 3%. The split follows loop-body size against the 1 KB
+  cache, not algorithm cost.
+- At zero wait states the code issues about **one instruction per cycle**. GCC
+  already interleaves the independent FMA chains and spills only 14 of 95
+  memory operations in the largest kernel, so **hand-written assembly has no
+  stalls left to remove**. The one thing GCC will not emit is VLDM/VSTM for
+  data, and consecutive VLDRs off one base already pipeline at a cycle each, so
+  that buys code bytes rather than cycles — worth single digits on one
+  algorithm, against a hand-written kernel plus a C fallback for four other
+  targets. Not the place to spend effort.
+- If a user's part has tightly-coupled memory, **telling them to put the
+  dynamics code in it beats anything left in the source.**
+
 **Where the time actually goes.** `update_kinematics` dominates a tick and
 everything else reads the cache it builds, so `rnea`, `crba`, `aba`, `fk_frame`
 and the Jacobians are unaffected by anything done to it. Two facts follow:
