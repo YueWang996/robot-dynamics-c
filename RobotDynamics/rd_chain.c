@@ -346,13 +346,9 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         rd_real_t* icp = &chain->inertia_compact[i * RD_INERTIA_COMPACT_LEN];
         rd_real_t m = Is[0];
         icp[0] = m;
-        if (m > RD_REAL(0.0)) {
-            icp[1] = -Is[4*6 + 2] / m;   /* cx from  m*[c]x */
-            icp[2] =  Is[3*6 + 2] / m;   /* cy */
-            icp[3] = -Is[3*6 + 1] / m;   /* cz */
-        } else {
-            icp[1] = icp[2] = icp[3] = RD_REAL(0.0);
-        }
+        icp[1] = -Is[4*6 + 2];   /* h = m*c, read straight off the m*[c]x block */
+        icp[2] =  Is[3*6 + 2];
+        icp[3] = -Is[3*6 + 1];
         icp[4] = Is[3*6 + 3];   /* Jxx */
         icp[5] = Is[4*6 + 4];   /* Jyy */
         icp[6] = Is[5*6 + 5];   /* Jzz */

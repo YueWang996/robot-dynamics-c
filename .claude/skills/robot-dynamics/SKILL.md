@@ -172,8 +172,8 @@ Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
 operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 555 µs (1.8 kHz).
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 168 µs
-(6.0 kHz) for torque and 414 µs (2.4 kHz) for operational space. The two M4F parts
+On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 169 µs
+(5.9 kHz) for torque and 282 µs (3.5 kHz) for operational space. The two M4F parts
 agree within 4% on cycles per call (median 0.98×), so **scale any other
 Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
 the M33's cycles for this workload, and running from flash costs another ~17%.
@@ -194,7 +194,9 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   sensor mounts and inertial frames are all fixed nodes — Go2 is 18 of 30.
   `rd_chain_build` folds each one's inertia into its nearest moving ancestor and
   the dynamics traverse only the moving nodes, worth −53% on `rnea`, −47% on
-  `crba` and −51% on `aba`. `rd_update_kinematics` refreshes only moving links
+  `crba` and −51% on `aba`. CRBA gains again from carrying its composite
+  inertia as ten numbers rather than a 6x6, which is exact because a sum of
+  rigid-body inertias is a rigid body: another −54%. `rd_update_kinematics` refreshes only moving links
   too; a fixed link's pose and velocity are resolved by the accessor that asks
   for them. **Read frames through `rd_forward_kinematics` / `rd_spatial_velocity`,
   never from `state->T_world` directly** — for a fixed link that slot is not

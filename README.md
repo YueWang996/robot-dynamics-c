@@ -113,17 +113,16 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
 | `update_kinematics` | 155.2 | **106.9** | 489.5 | 1458.8 | 1495.0 |
 | `rnea` | 125.0 | **61.1** | 270.7 | 1650.3 | 2324.4 |
-| `crba` | 234.4 | **245.8** | 971.5 | 2293.0 | 3627.7 |
-| `aba` | 399.6 | **303.0** | 1299.5 | 4239.1 | 6243.3 |
+| `crba` | 234.4 | **113.7** | 971.5 | 2293.0 | 3627.7 |
+| `aba` | 399.6 | **302.3** | 1299.5 | 4239.1 | 6243.3 |
 | torque tick | 280 µs<br>3.6 kHz | **168 µs<br>6.0 kHz** | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | 515 µs<br>1.9 kHz | **414 µs<br>2.4 kHz** | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| operational space | 515 µs<br>1.9 kHz | **282 µs<br>3.5 kHz** | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`.
 
-> Only the STM32G474 column is current. The others were measured before fixed
-> links were folded out of the dynamics, and are pessimistic by up to ~50% on
-> `rnea`, `crba` and `aba` for a model with many fixed links. Go2 has 18 of
-> them, xarm7 has 3, spine has none and is unaffected.
+> Only the STM32G474 column is current. The others predate both the fixed-link
+> fold and the compact composite inertia, and are pessimistic on the dynamics
+> by 2x or more.
 
 A torque tick on the M33 and the RP2350's RISC-V core, across robots:
 

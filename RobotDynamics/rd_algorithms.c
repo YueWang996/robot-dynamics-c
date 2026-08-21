@@ -460,35 +460,39 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     if (!chain || !state || !M_out) return RD_ERR_NULL_PTR;
 
     const rd_int_t nv = rd_chain_get_nv(chain);
+    /* The composite is a sum of rigid-body inertias in a common frame, which is
+     * itself a rigid body, so it lives in ten numbers rather than thirty-six.
+     * state->inertia is sized for the 6x6 that ABA needs; here only the first
+     * ten floats of each node's slot are used. */
     rd_real_t* Ic = state->inertia;
+    #define RD_IC(n) (&Ic[(n) * RD_INERTIA_COMPACT_LEN])
 
     memset(M_out, 0, (size_t)nv * nv * sizeof(rd_real_t));
 
-    /* Only the dynamics nodes carry inertia after the fold, so only they need
-     * seeding -- on Go2 that is 13 copies of 36 floats instead of 31. */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
         rd_idx_t node = chain->dyn_order[di];
-        memcpy(&Ic[node*36], &chain->spatial_inertias[node*36],
-               36 * sizeof(rd_real_t));
+        memcpy(RD_IC(node), &chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
+               RD_INERTIA_COMPACT_LEN * sizeof(rd_real_t));
     }
 
-    /* Inward: composite inertia */
+    /* Inward: composite inertia. Takes the child-in-parent transform directly,
+     * so there is no inverse to form per node. */
     for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
         rd_idx_t node   = chain->dyn_order[di];
         rd_idx_t parent = chain->dyn_parent[node];
         if (parent != -1) {
-            rd_real_t Ti[16];
-            rd_mat4_inv(&state->T_dyn[node*16], Ti);
-            algo_transform_inertia_accumulate(Ti, &Ic[node*36], &Ic[parent*36]);
+            rd_rbi_congruence_accum(&state->T_dyn[node*16],
+                                    RD_IC(node), RD_IC(parent));
         }
     }
 
     rd_idx_t root = chain->topo_order[0];
     if (chain->has_floating_base) {
-        const rd_real_t* Ic_root = &Ic[root*36];
+        rd_real_t M6[36];
+        rd_rbi_to_mat6(RD_IC(root), M6);
         for (int r = 0; r < 6; ++r)
             for (int c = 0; c < 6; ++c)
-                M_out[r*nv + c] = Ic_root[r*6 + c];
+                M_out[r*nv + c] = M6[r*6 + c];
     }
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
@@ -498,7 +502,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
 
         const rd_real_t* S_i = &state->S[node*6];
         rd_real_t F[6];
-        rd_mat6_vec(&Ic[node*36], S_i, F);
+        rd_spatial_inertia_mul(RD_IC(node), S_i, F);
 
         rd_real_t diag = RD_REAL(0.0);
         for (int k = 0; k < 6; ++k) diag += S_i[k] * F[k];
@@ -538,6 +542,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
             }
         }
     }
+    #undef RD_IC
     return RD_OK;
 }
 

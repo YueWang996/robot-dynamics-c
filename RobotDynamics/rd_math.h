@@ -305,25 +305,106 @@ static RD_INLINE void rd_mat6_add(const rd_real_t* A, const rd_real_t* B, rd_rea
 #define RD_INERTIA_COMPACT_LEN 10
 
 /* out = I * v, with v and out ordered [linear, angular]. */
+/*
+ * Rigid-body inertia in ten numbers: {m, h, J}, where h = m*c is the first
+ * moment and J the second moment about the frame origin.
+ *
+ *   I = [[ m*1, -[h]x ], [ [h]x, J ]]
+ *
+ * CRBA's composite inertia is a sum of rigid-body inertias carried into a
+ * common frame, and both summing and transforming preserve rigid-body form, so
+ * the composite never needs the general 6x6 -- ten numbers describe it exactly.
+ * That is 26 floats per node of traffic saved and a congruence of about 80
+ * multiplies instead of 216.
+ *
+ *   m' = m
+ *   h' = R h + m p
+ *   J' = R J R^T + (2 p.Rh + m|p|^2) I - (Rh)p^T - p(Rh)^T - m p p^T
+ *
+ * T is the child expressed in the parent, so unlike the 6x6 congruence this
+ * needs no inverse of it.
+ */
+static RD_INLINE void rd_rbi_congruence_accum(const rd_real_t* RD_RESTRICT T,
+                                              const rd_real_t* RD_RESTRICT in,
+                                              rd_real_t* RD_RESTRICT accum) {
+    const rd_real_t m = in[0];
+    const rd_real_t px = T[12], py = T[13], pz = T[14];
+    const rd_real_t R[9] = { T[0], T[4], T[8],
+                             T[1], T[5], T[9],
+                             T[2], T[6], T[10] };
+
+    const rd_real_t gx = R[0]*in[1] + R[1]*in[2] + R[2]*in[3];   /* R h */
+    const rd_real_t gy = R[3]*in[1] + R[4]*in[2] + R[5]*in[3];
+    const rd_real_t gz = R[6]*in[1] + R[7]*in[2] + R[8]*in[3];
+
+    accum[0] += m;
+    accum[1] += gx + m*px;
+    accum[2] += gy + m*py;
+    accum[3] += gz + m*pz;
+
+    const rd_real_t J[9] = { in[4], in[7], in[8],
+                             in[7], in[5], in[9],
+                             in[8], in[9], in[6] };
+    rd_real_t RJ[9];
+    rd_mat3_mul(R, J, RJ);
+
+    const rd_real_t d = RD_REAL(2.0)*(px*gx + py*gy + pz*gz)
+                      + m*(px*px + py*py + pz*pz);
+
+    /* Only the six unique entries of the symmetric result are formed. */
+    #define RD_RBI_J(i,j) (RJ[(i)*3+0]*R[(j)*3+0] + RJ[(i)*3+1]*R[(j)*3+1] \
+                         + RJ[(i)*3+2]*R[(j)*3+2])
+    const rd_real_t g[3] = { gx, gy, gz };
+    const rd_real_t q[3] = { px, py, pz };
+    accum[4] += RD_RBI_J(0,0) + d - RD_REAL(2.0)*g[0]*q[0] - m*q[0]*q[0];
+    accum[5] += RD_RBI_J(1,1) + d - RD_REAL(2.0)*g[1]*q[1] - m*q[1]*q[1];
+    accum[6] += RD_RBI_J(2,2) + d - RD_REAL(2.0)*g[2]*q[2] - m*q[2]*q[2];
+    accum[7] += RD_RBI_J(0,1) - g[0]*q[1] - q[0]*g[1] - m*q[0]*q[1];
+    accum[8] += RD_RBI_J(0,2) - g[0]*q[2] - q[0]*g[2] - m*q[0]*q[2];
+    accum[9] += RD_RBI_J(1,2) - g[1]*q[2] - q[1]*g[2] - m*q[1]*q[2];
+    #undef RD_RBI_J
+}
+
+/** Expand the ten-number form into a full 6x6, row-major. */
+static RD_INLINE void rd_rbi_to_mat6(const rd_real_t* RD_RESTRICT in,
+                                     rd_real_t* RD_RESTRICT M) {
+    const rd_real_t m = in[0], hx = in[1], hy = in[2], hz = in[3];
+    for (int i = 0; i < 36; ++i) M[i] = RD_REAL(0.0);
+    M[0] = m; M[7] = m; M[14] = m;
+    const rd_real_t hs[9] = { RD_REAL(0.0), -hz, hy,
+                              hz, RD_REAL(0.0), -hx,
+                              -hy, hx, RD_REAL(0.0) };
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            M[r*6 + (c+3)] = -hs[r*3 + c];
+            M[(r+3)*6 + c] =  hs[r*3 + c];
+        }
+    }
+    M[21] = in[4]; M[28] = in[5]; M[35] = in[6];
+    M[22] = M[27] = in[7];
+    M[23] = M[33] = in[8];
+    M[29] = M[34] = in[9];
+}
+
 static RD_INLINE void rd_spatial_inertia_mul(const rd_real_t* RD_RESTRICT ic,
                                              const rd_real_t* RD_RESTRICT v,
                                              rd_real_t* RD_RESTRICT out) {
     const rd_real_t m  = ic[0];
-    const rd_real_t cx = ic[1], cy = ic[2], cz = ic[3];
+    const rd_real_t hx = ic[1], hy = ic[2], hz = ic[3];
     const rd_real_t vx = v[0], vy = v[1], vz = v[2];
     const rd_real_t wx = v[3], wy = v[4], wz = v[5];
 
-    /* linear = m * (v - c x w) */
-    out[0] = m * (vx - (cy*wz - cz*wy));
-    out[1] = m * (vy - (cz*wx - cx*wz));
-    out[2] = m * (vz - (cx*wy - cy*wx));
+    /* linear = m*v - h x w */
+    out[0] = m*vx - (hy*wz - hz*wy);
+    out[1] = m*vy - (hz*wx - hx*wz);
+    out[2] = m*vz - (hx*wy - hy*wx);
 
-    /* angular = m * (c x v) + J w */
+    /* angular = h x v + J w */
     const rd_real_t Jxx = ic[4], Jyy = ic[5], Jzz = ic[6];
     const rd_real_t Jxy = ic[7], Jxz = ic[8], Jyz = ic[9];
-    out[3] = m * (cy*vz - cz*vy) + Jxx*wx + Jxy*wy + Jxz*wz;
-    out[4] = m * (cz*vx - cx*vz) + Jxy*wx + Jyy*wy + Jyz*wz;
-    out[5] = m * (cx*vy - cy*vx) + Jxz*wx + Jyz*wy + Jzz*wz;
+    out[3] = (hy*vz - hz*vy) + Jxx*wx + Jxy*wy + Jxz*wz;
+    out[4] = (hz*vx - hx*vz) + Jxy*wx + Jyy*wy + Jyz*wz;
+    out[5] = (hx*vy - hy*vx) + Jxz*wx + Jyz*wy + Jzz*wz;
 }
 
 static RD_INLINE void rd_mat6_transpose(const rd_real_t* RD_RESTRICT A, 
