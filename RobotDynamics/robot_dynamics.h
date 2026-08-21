@@ -53,7 +53,7 @@
  * - RD_USE_CMSIS_DSP: Use ARM CMSIS-DSP (default: 0)
  * - RD_MAX_LINKS / RD_MAX_JOINTS: model size bounds (default: 16 / 12)
  *
- * @version 0.2.0
+ * @version 0.5.0
  */
 
 #ifndef ROBOT_DYNAMICS_H
