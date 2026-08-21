@@ -116,44 +116,47 @@ static RD_INLINE rd_int_t algo_vel_index(const rd_chain_t* chain, rd_idx_t node)
     return chain->has_floating_base ? (6 + jidx) : jidx;
 }
 
-/* In-place Cholesky solve of a 6x6 SPD system, A x = b. Returns 0 on success. */
-static int algo_solve6_spd(const rd_real_t A[36], const rd_real_t b[6], rd_real_t x[6]) {
-    rd_real_t L[36];
-    memcpy(L, A, 36*sizeof(rd_real_t));
-
-    /* The reciprocal of each diagonal, kept from the factorisation: a divide
-     * is 14 cycles on an FPv4-SP and both substitutions want the same six. */
-    rd_real_t dinv[6];
-
-    for (int j = 0; j < 6; ++j) {
-        rd_real_t d = L[j*6 + j];
-        for (int k = 0; k < j; ++k) d -= L[j*6 + k] * L[j*6 + k];
+/* In-place Cholesky solve of an n x n SPD system, A x = b, A row-major and
+ * destroyed. Returns 0 on success. Used for the floating base's 6x6 block and
+ * for the whole mass matrix in RD_FD_CRBA. */
+static int algo_solve_spd(rd_real_t* RD_RESTRICT L, const rd_real_t* RD_RESTRICT b,
+                          rd_real_t* RD_RESTRICT x, rd_int_t n,
+                          rd_real_t* RD_RESTRICT dinv) {
+    for (rd_int_t j = 0; j < n; ++j) {
+        rd_real_t d = L[j*n + j];
+        for (rd_int_t k = 0; k < j; ++k) d -= L[j*n + k] * L[j*n + k];
         if (d <= RD_EPS) return -1;               /* not positive definite */
         d = rd_sqrt(d);
-        L[j*6 + j] = d;
-        rd_real_t inv = RD_REAL(1.0) / d;
-        dinv[j] = inv;
-        for (int i = j + 1; i < 6; ++i) {
-            rd_real_t s = L[i*6 + j];
-            for (int k = 0; k < j; ++k) s -= L[i*6 + k] * L[j*6 + k];
-            L[i*6 + j] = s * inv;
+        L[j*n + j] = d;
+        const rd_real_t inv = RD_REAL(1.0) / d;
+        dinv[j] = inv;                            /* both substitutions want it */
+        for (rd_int_t i = j + 1; i < n; ++i) {
+            rd_real_t sum = L[i*n + j];
+            for (rd_int_t k = 0; k < j; ++k) sum -= L[i*n + k] * L[j*n + k];
+            L[i*n + j] = sum * inv;
         }
     }
 
-    /* forward substitution: L y = b */
-    rd_real_t y[6];
-    for (int i = 0; i < 6; ++i) {
-        rd_real_t s = b[i];
-        for (int k = 0; k < i; ++k) s -= L[i*6 + k] * y[k];
-        y[i] = s * dinv[i];
+    /* forward substitution: L y = b, into x */
+    for (rd_int_t i = 0; i < n; ++i) {
+        rd_real_t sum = b[i];
+        for (rd_int_t k = 0; k < i; ++k) sum -= L[i*n + k] * x[k];
+        x[i] = sum * dinv[i];
     }
     /* back substitution: L^T x = y */
-    for (int i = 5; i >= 0; --i) {
-        rd_real_t s = y[i];
-        for (int k = i + 1; k < 6; ++k) s -= L[k*6 + i] * x[k];
-        x[i] = s * dinv[i];
+    for (rd_int_t i = n - 1; i >= 0; --i) {
+        rd_real_t sum = x[i];
+        for (rd_int_t k = i + 1; k < n; ++k) sum -= L[k*n + i] * x[k];
+        x[i] = sum * dinv[i];
     }
     return 0;
+}
+
+/* The floating base's 6x6 block, through the same factorisation. */
+static int algo_solve6_spd(const rd_real_t A[36], const rd_real_t b[6], rd_real_t x[6]) {
+    rd_real_t L[36], dinv[6];
+    memcpy(L, A, 36*sizeof(rd_real_t));
+    return algo_solve_spd(L, b, x, 6, dinv);
 }
 
 /* ============================================================================
@@ -477,6 +480,54 @@ rd_status_t rd_rnea(const rd_chain_t* chain, const rd_state_t* state,
                     const rd_real_t* qdd, const rd_real_t* gravity,
                     rd_real_t* tau_out) {
     return rnea_impl(chain, state, qdd, gravity, 1, tau_out);
+}
+
+/* ============================================================================
+ * Forward dynamics, either way
+ * ============================================================================ */
+
+rd_int_t rd_forward_dynamics_work(const rd_chain_t* chain, rd_fd_method_t method) {
+    if (!chain || method != RD_FD_CRBA) return 0;
+    const rd_int_t nv = rd_chain_get_nv(chain);
+    return nv * nv + nv;
+}
+
+rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
+                                const rd_state_t* state,
+                                const rd_real_t* tau,
+                                const rd_real_t* gravity,
+                                rd_fd_method_t method,
+                                rd_real_t* work,
+                                rd_real_t* qdd_out) {
+    if (!chain || !state || !qdd_out) return RD_ERR_NULL_PTR;
+    if (method == RD_FD_ABA) return rd_aba(chain, state, tau, gravity, qdd_out);
+    if (method != RD_FD_CRBA) return RD_ERR_INVALID_INDEX;
+    if (!work) return RD_ERR_NULL_PTR;
+
+    const rd_int_t nv = rd_chain_get_nv(chain);
+    rd_real_t* M = work;              /* nv*nv, row-major */
+    rd_real_t* h = work + nv * nv;    /* nv, then reused as the right-hand side */
+
+    rd_status_t st = rd_crba(chain, state, M);
+    if (st != RD_OK) return st;
+    st = rd_nonlinear_terms(chain, state, gravity, h);
+    if (st != RD_OK) return st;
+
+    /* M qdd = tau - h. The right-hand side goes over h; M is left holding its
+     * own Cholesky factor, which is why the header promises the caller M only
+     * as far as the factorisation. */
+    for (rd_int_t k = 0; k < nv; ++k) {
+        h[k] = (tau ? tau[k] : RD_REAL(0.0)) - h[k];
+    }
+
+    /* The reciprocal diagonal needs nv more floats and there is nowhere left
+     * in work, so it comes off the stack, bounded by the same limit the rest
+     * of the library uses for a velocity vector. */
+    rd_real_t dinv[6 + RD_MAX_JOINTS];
+    if (nv > (rd_int_t)(sizeof(dinv)/sizeof(dinv[0]))) return RD_ERR_INVALID_SIZE;
+
+    if (algo_solve_spd(M, h, qdd_out, nv, dinv) != 0) return RD_ERR_SINGULAR;
+    return RD_OK;
 }
 
 rd_status_t rd_gravity(const rd_chain_t* chain, const rd_state_t* state,

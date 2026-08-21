@@ -21,6 +21,7 @@ ALGO_ORDER = [
     "jacobian_local",
     "rnea",
     "aba",
+    "fd_crba",
     "crba",
     "gravity_comp",
     "spatial_accel",

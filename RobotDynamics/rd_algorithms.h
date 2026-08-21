@@ -128,6 +128,67 @@ rd_status_t rd_crba(const rd_chain_t* chain,
                     const rd_state_t* state,
                     rd_real_t* M_out);
 
+/**
+ * @brief Which recursion rd_forward_dynamics() should use.
+ *
+ * Both give the same qdd. Which is faster is a property of the robot, not of
+ * the library, so it is the caller's choice rather than a heuristic here:
+ *
+ *   RD_FD_ABA    Featherstone's articulated-body algorithm. O(n), needs no
+ *                workspace beyond rd_state_t, and is the only option if you
+ *                cannot spare nv*nv floats. Wins as the model grows.
+ *
+ *   RD_FD_CRBA   Build M(q) and h(q,qd), then solve M qdd = tau - h by
+ *                Cholesky. O(n^3) in the solve, but the mass matrix and the
+ *                bias term are cheap recursions and the solve is small, so for
+ *                the model sizes a microcontroller runs it is usually the
+ *                faster of the two. It also hands you M and h, which an
+ *                operational-space controller wants anyway.
+ *
+ * Measured on an STM32G474, forward dynamics = update_kinematics + the method:
+ *
+ *   xarm7   7 dof, fixed base       CRBA -15%
+ *   spine   9 dof, floating base    CRBA  -1%
+ *   go2    18 dof, floating base    ABA  -10%
+ *
+ * The crossover is around ten to twelve velocity DOF, and a floating base
+ * pushes it down: its six DOF are ancestors of every joint, so the mass matrix
+ * has no sparsity for the factorisation to exploit and the solve grows as
+ * nv^3 with nothing to skip. Measure your own model -- the benchmark's
+ * `fd_crba` row against `aba` is exactly this comparison.
+ */
+typedef enum {
+    RD_FD_ABA = 0,
+    RD_FD_CRBA
+} rd_fd_method_t;
+
+/**
+ * @brief Floats of workspace rd_forward_dynamics() needs for a method.
+ *
+ * Zero for RD_FD_ABA. For RD_FD_CRBA it is nv*nv + nv: the mass matrix, then
+ * the bias term, which is also where the right-hand side is built.
+ */
+rd_int_t rd_forward_dynamics_work(const rd_chain_t* chain, rd_fd_method_t method);
+
+/**
+ * @brief Forward dynamics by either recursion.
+ *
+ * @param tau      [nv] or NULL for zero torque.
+ * @param work     [rd_forward_dynamics_work()] scratch, or NULL for RD_FD_ABA.
+ *                 On return from RD_FD_CRBA the first nv*nv floats hold M(q)
+ *                 row-major and the next nv hold h(q,qd) -- both are yours.
+ * @param qdd_out  [nv].
+ * @return RD_ERR_SINGULAR if the mass matrix is not positive definite, which
+ *         means the model has a zero-inertia moving link.
+ */
+rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
+                                const rd_state_t* state,
+                                const rd_real_t* tau,
+                                const rd_real_t* gravity,
+                                rd_fd_method_t method,
+                                rd_real_t* work,
+                                rd_real_t* qdd_out);
+
 /* ============================================================================
  * Convenience wrappers
  * ============================================================================ */

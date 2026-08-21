@@ -225,6 +225,31 @@ int main(void) {
         printf("max |rnea(aba(tau)) - tau| = %.3e\n", (double)worst_tau);
         check(worst_tau < RD_REAL(1e-3), "RNEA and ABA are mutual inverses");
     }
+
+    /* The two forward-dynamics recursions are different arithmetic reaching
+     * the same qdd: ABA propagates articulated inertias, RD_FD_CRBA builds the
+     * mass matrix and factorises it. Agreement is the check that neither has
+     * drifted. */
+    {
+        rd_int_t nw = rd_forward_dynamics_work(&chain, RD_FD_CRBA);
+        static rd_real_t work[(6 + RD_MAX_JOINTS) * (6 + RD_MAX_JOINTS) + 6 + RD_MAX_JOINTS];
+        rd_real_t qdd_aba[RD_MAX_JOINTS + 6], qdd_crba[RD_MAX_JOINTS + 6];
+        check(nw <= (rd_int_t)(sizeof(work)/sizeof(work[0])), "fd workspace fits");
+
+        rd_status_t sa = rd_forward_dynamics(&chain, &state, tau, NULL,
+                                             RD_FD_ABA, NULL, qdd_aba);
+        rd_status_t sc = rd_forward_dynamics(&chain, &state, tau, NULL,
+                                             RD_FD_CRBA, work, qdd_crba);
+        check(sa == RD_OK && sc == RD_OK, "both forward-dynamics methods succeeded");
+
+        rd_real_t worst = RD_REAL(0.0);
+        for (rd_int_t i = 0; i < nv; ++i) {
+            rd_real_t e = rd_fabs(qdd_aba[i] - qdd_crba[i]);
+            if (e > worst) worst = e;
+        }
+        printf("max |qdd_aba - qdd_crba| = %.3e\n", (double)worst);
+        check(worst < RD_REAL(1e-3), "ABA and the CRBA solve agree");
+    }
     printf("\n");
 
     /* ---- Spatial quantities ---------------------------------------------- */

@@ -208,6 +208,18 @@ static rd_status_t case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t e
     return st;
 }
 
+/* The other forward dynamics: build M(q) and h(q,qd), then factorise. Sized
+ * for the largest model the suite carries. */
+static rd_real_t g_fd_work[BENCH_MAX_NV * BENCH_MAX_NV + BENCH_MAX_NV];
+
+static rd_status_t case_fd_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    (void)eef;
+    rd_status_t st = rd_forward_dynamics(c, s, g_tau_in, NULL, RD_FD_CRBA,
+                                         g_fd_work, g_qdd_out);
+    g_checksum += g_qdd_out[0];
+    return st;
+}
+
 static rd_status_t case_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
     rd_status_t st = rd_crba(c, s, g_M);
@@ -263,6 +275,7 @@ static const bench_case_t g_cases[] = {
     { "jacobian_local",     case_jacobian_local,    1, "cached, adds a 6xnv reference-frame change" },
     { "rnea",               case_rnea,              1, "inverse dynamics" },
     { "aba",                case_aba,               1, "forward dynamics" },
+    { "fd_crba",            case_fd_crba,           1, "forward dynamics, M + Cholesky" },
     { "crba",               case_crba,              1, "cached, joint-space mass matrix" },
     { "gravity_comp",       case_gravity,           1, "cached, RNEA with qdd=0" },
     { "spatial_accel",      case_spatial_accel,     1, "cached, re-runs the forward pass" },

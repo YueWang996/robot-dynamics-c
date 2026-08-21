@@ -135,6 +135,32 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 > optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
 > that on CRBA and the Jacobians.
 
+### Two forward dynamics, and which to pick
+
+`rd_forward_dynamics()` takes a method. Both give the same `qdd` -- they agree
+to 3.2e-13 in double precision -- and which is faster is a property of the
+robot rather than of the library, so it is your choice rather than a heuristic:
+
+| | recursion | workspace | scales as |
+|---|---|---|---|
+| `RD_FD_ABA` | articulated-body | none beyond `rd_state_t` | O(n) |
+| `RD_FD_CRBA` | M(q), h(q,qd), then Cholesky | `nv*nv + nv` floats | O(n³) in the solve |
+
+Measured on the STM32G474, `update_kinematics` + the method:
+
+| Robot | nv | ABA | CRBA | |
+|---|---|---|---|---|
+| `xarm7` | 7, fixed base | 122.3 µs | **103.6 µs** | CRBA −15% |
+| `spine` | 9, floating base | 67.6 µs | **66.9 µs** | CRBA −1% |
+| `go2` | 18, floating base | **209.8 µs** | 232.4 µs | ABA −10% |
+
+The crossover is around ten to twelve velocity DOF, and a floating base pushes
+it down: its six DOF are ancestors of every joint, so the mass matrix has no
+sparsity for the factorisation to exploit. The CRBA route also hands back M
+and h, which an operational-space controller wants anyway. The benchmark's
+`fd_crba` row against `aba` is exactly this comparison, so you can run it on
+your own model.
+
 ### Where the remaining time goes
 
 At 170 MHz the G474's flash needs four wait states, and the ART accelerator's
