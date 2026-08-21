@@ -548,18 +548,17 @@ static RD_INLINE void rd_rbi_congruence_accum(const rd_real_t* RD_RESTRICT T,
     rd_real_t Jc[6];   /* R J R^T, packed xx yy zz xy xz yz */
 
     if (axis_k >= 0) {
-        const rd_int_t i = (axis_k == 2) ? 0 : (axis_k + 1);
-        const rd_int_t j = (i == 2) ? 0 : (i + 1);
-        const rd_real_t c = T[i*4 + i], sn = T[i*4 + j];
         /*
          * One switch serves both products. The congruence's own switch folds
          * away because it is reached with a literal, so every subscript here
-         * is a compile-time constant -- which is the whole point. The packing
-         * of in[4..9] is the packing rd_axis_congruence3_sym wants, so J goes
-         * in and Jc comes out with no 3x3 in between.
+         * is a compile-time constant -- which is the whole point, and that
+         * includes reading c and s out of T. The packing of in[4..9] is the
+         * packing rd_axis_congruence3_sym wants, so J goes in and Jc comes out
+         * with no 3x3 in between.
          */
         #define RD_RBI_AX_(K, P, Q)                                             \
             do {                                                                \
+                const rd_real_t c = T[(P)*4+(P)], sn = T[(P)*4+(Q)];            \
                 g[(K)] = in[1+(K)];                                             \
                 g[(P)] = c*in[1+(P)] - sn*in[1+(Q)];                            \
                 g[(Q)] = sn*in[1+(P)] + c*in[1+(Q)];                            \
@@ -966,12 +965,23 @@ static RD_INLINE void rd_abi_congruence_accum(const rd_real_t* RD_RESTRICT T,
         B[6]=I_in[17]; B[7]=I_in[19]; B[8]=I_in[20];
 
         if (axis_k >= 0) {
-            const rd_int_t i = (axis_k == 2) ? 0 : (axis_k + 1);
-            const rd_int_t j = (i == 2) ? 0 : (i + 1);
-            const rd_real_t c = T[i*4 + i], sn = T[i*4 + j];
-            rd_axis_congruence3(axis_k, c, sn, A, TL);
-            rd_axis_congruence3(axis_k, c, sn, I_in + 6, G);
-            rd_axis_congruence3(axis_k, c, sn, B, H);
+            /* c and s sit at compile-time offsets in T once the axis is a
+             * literal: for a rotation about K they are its (P,P) and (Q,P)
+             * entries. Reaching them through a computed index instead costs
+             * six integer instructions per node. */
+            #define RD_ABI_AX_(K, P, Q)                                     \
+                do {                                                        \
+                    const rd_real_t c = T[(P)*4+(P)], sn = T[(P)*4+(Q)];    \
+                    rd_axis_congruence3((K), c, sn, A, TL);                 \
+                    rd_axis_congruence3((K), c, sn, I_in + 6, G);           \
+                    rd_axis_congruence3((K), c, sn, B, H);                  \
+                } while (0)
+            switch (axis_k) {
+                case 0:  RD_ABI_AX_(0, 1, 2); break;
+                case 1:  RD_ABI_AX_(1, 2, 0); break;
+                default: RD_ABI_AX_(2, 0, 1); break;
+            }
+            #undef RD_ABI_AX_
         } else {
             const rd_real_t R[9] = { T[0], T[4], T[8],
                                      T[1], T[5], T[9],
@@ -1134,15 +1144,17 @@ static RD_INLINE void rd_spatial_transform_motion_axis(const rd_real_t* RD_RESTR
     }
 }
 
-/**
- * @brief Sparse Force Transform: f_A = Ad(T_BA)^T * f_B
- */
 /* Motion transform by the inverse of T, without forming the inverse.
  *
  *   rd_spatial_transform_motion_inv(T, v, out) == rd_spatial_transform_motion(inv(T), v, out)
  *
  * Same operation count as the forward version, so a caller holding only the
- * child-in-parent transform does not have to store the other direction too. */
+ * child-in-parent transform does not have to store the other direction too.
+ *
+ * Specialising this one on an axis-aligned rotation, the way the inertia
+ * congruences are, was measured and reverted: it saves ten multiplies out of
+ * forty-five, and the second kernel takes enough registers from the general
+ * one to cost a robot without axis-aligned joints 4% of its kinematics. */
 static RD_INLINE void rd_spatial_transform_motion_inv(const rd_real_t* RD_RESTRICT T,
                                                       const rd_real_t* RD_RESTRICT v_in,
                                                       rd_real_t* RD_RESTRICT v_out) {
