@@ -31,144 +31,10 @@ static RD_INLINE void algo_motion_transform(rd_int_t jtype, const rd_real_t axis
 }
 
 /* out = A * [p]x, row-major 3x3. Each column is a cross product: 18 mults. */
-static RD_INLINE void algo_mat3_mul_skew(const rd_real_t A[9], const rd_real_t p[3],
-                                         rd_real_t out[9]) {
-    for (int i = 0; i < 3; ++i) {
-        const rd_real_t a0 = A[i*3+0], a1 = A[i*3+1], a2 = A[i*3+2];
-        out[i*3+0] =  a1*p[2] - a2*p[1];
-        out[i*3+1] = -a0*p[2] + a2*p[0];
-        out[i*3+2] =  a0*p[1] - a1*p[0];
-    }
-}
+/* The spatial-inertia congruence moved to rd_math.h so that rd_chain_build
+ * can fold fixed links with the same code that transforms them here. */
+#define algo_transform_inertia_accumulate rd_spatial_inertia_congruence
 
-/* out = [p]x * A, row-major 3x3. 18 mults. */
-static RD_INLINE void algo_skew_mul_mat3(const rd_real_t p[3], const rd_real_t A[9],
-                                         rd_real_t out[9]) {
-    for (int j = 0; j < 3; ++j) {
-        const rd_real_t a0 = A[0*3+j], a1 = A[1*3+j], a2 = A[2*3+j];
-        out[0*3+j] = -p[2]*a1 + p[1]*a2;
-        out[1*3+j] =  p[2]*a0 - p[0]*a2;
-        out[2*3+j] = -p[1]*a0 + p[0]*a1;
-    }
-}
-
-/* out = R^T * C * R, row-major 3x3. */
-static RD_INLINE void algo_congruence3(const rd_real_t R[9], const rd_real_t C[9],
-                                       rd_real_t out[9]) {
-    rd_real_t CR[9];
-    rd_mat3_mul(C, R, CR);
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            out[i*3+j] = R[0*3+i]*CR[0*3+j]
-                       + R[1*3+i]*CR[1*3+j]
-                       + R[2*3+i]*CR[2*3+j];
-        }
-    }
-}
-
-/* dst[3x3 block at stride 6] += R^T * C * R, without materialising the result. */
-static RD_INLINE void algo_congruence3_accum(const rd_real_t R[9], const rd_real_t C[9],
-                                             rd_real_t* dst) {
-    rd_real_t CR[9];
-    rd_mat3_mul(C, R, CR);
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            dst[i*6+j] += R[0*3+i]*CR[0*3+j]
-                        + R[1*3+i]*CR[1*3+j]
-                        + R[2*3+i]*CR[2*3+j];
-        }
-    }
-}
-
-/*
- * I_accum += X^T * I_in * X, with X = Ad(T).
- *
- * Callers pass state->Ti, the pose of the parent expressed in the child, which
- * makes X the motion transform from the parent frame into the child's. That is
- * the direction the composite/articulated inertia congruence needs.
- *
- * This is the hot spot of both rd_crba() and rd_aba(), so it is written against
- * the structure rather than as two dense 6x6 products. Writing
- * I = [[A11, A12], [A21, A22]] and X = [[R, [p]x R], [0, R]], the congruence is
- *
- *   TL = R^T A11 R
- *   TR = R^T (A11 P + A12) R                       P = [p]x
- *   BL = TR^T
- *   BR = R^T (A22 + A21 P + (A21 P)^T - P A11 P) R
- *
- * which needs 216 multiplies instead of 432, skips X's 3x3 zero block entirely,
- * gets the lower-left triangle for free from symmetry, and never materialises a
- * 6x6 temporary.
- */
-static void algo_transform_inertia_accumulate(const rd_real_t T[16],
-                                              const rd_real_t* I_in,
-                                              rd_real_t* I_accum) {
-    /* R row-major, p, out of the column-major T */
-    const rd_real_t R[9] = { T[0], T[4], T[8],
-                             T[1], T[5], T[9],
-                             T[2], T[6], T[10] };
-    const rd_real_t p[3] = { T[12], T[13], T[14] };
-
-    /*
-     * Only three 3x3 temporaries live at once. The obvious version -- pull
-     * A11/A12/A21/A22 out, build C12/C22, then materialise S11/S12/S22 --
-     * needs twelve, which is more than the M33's 32 single-precision registers
-     * can hold, so it spills to stack and reloads. On a core where this code is
-     * memory-bound rather than multiply-bound, that costs more than the
-     * multiplies saved.
-     */
-    rd_real_t A11[9], C[9], S12[9];
-
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) A11[i*3+j] = I_in[i*6 + j];
-    }
-
-    /* TL += R^T A11 R */
-    algo_congruence3_accum(R, A11, I_accum);
-
-    /* C = A11 P + A12,   then TR += R^T C R  and  BL += (that)^T */
-    algo_mat3_mul_skew(A11, p, C);
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) C[i*3+j] += I_in[i*6 + 3 + j];
-    }
-    algo_congruence3(R, C, S12);
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            I_accum[i*6 + 3 + j] += S12[i*3+j];
-            I_accum[(i+3)*6 + j] += S12[j*3+i];        /* BL = TR^T */
-        }
-    }
-
-    /* C = A22 + A21 P + (A21 P)^T - P A11 P,  then BR += R^T C R */
-    {
-        rd_real_t t[9];
-        algo_skew_mul_mat3(p, A11, t);                 /* P A11   */
-        algo_mat3_mul_skew(t, p, C);                   /* P A11 P */
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                t[i*3+j] = I_in[(i+3)*6 + j];          /* A21     */
-            }
-        }
-        rd_real_t A21P[9];
-        algo_mat3_mul_skew(t, p, A21P);
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                C[i*3+j] = I_in[(i+3)*6 + 3 + j] + A21P[i*3+j] + A21P[j*3+i]
-                         - C[i*3+j];
-            }
-        }
-    }
-    algo_congruence3_accum(R, C, I_accum + 3*6 + 3);
-}
-
-/*
- * Velocity of a link relative to its parent, i.e. S * qd.
- *
- * This is v_i - Ad(Ti) v_parent, but rd_update_kinematics() already formed it
- * on the way to v_i, so the joint velocity it used is cached rather than the
- * transform being run a second time. RNEA, ABA and rd_spatial_acceleration()
- * each want this once per link.
- */
 static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
                                           const rd_state_t* state,
                                           rd_idx_t node, rd_idx_t parent,
@@ -188,6 +54,35 @@ static RD_INLINE void algo_gravity_world(const rd_real_t* gravity, rd_real_t out
 }
 
 /* Velocity index of a node's joint, or -1 if it has none. */
+/*
+ * rd_update_kinematics() refreshes only the nodes that can move. A fixed
+ * link's pose and velocity in its nearest moving ancestor are constants, so
+ * resolving one here is a single transform -- cheaper than walking every fixed
+ * link on every tick when most of them are never queried.
+ */
+static RD_INLINE void algo_frame_world(const rd_chain_t* chain,
+                                       const rd_state_t* state,
+                                       rd_idx_t frame, rd_real_t T_out[16]) {
+    if (rd_chain_node_is_dynamic(chain, frame)) {
+        memcpy(T_out, &state->T_world[frame*16], 16*sizeof(rd_real_t));
+    } else {
+        rd_mat4_mul_se3(&state->T_world[chain->dyn_parent[frame]*16],
+                        &state->T_dyn[frame*16], T_out);
+    }
+}
+
+static RD_INLINE void algo_frame_velocity(const rd_chain_t* chain,
+                                          const rd_state_t* state,
+                                          rd_idx_t frame, rd_real_t v_out[6]) {
+    if (rd_chain_node_is_dynamic(chain, frame)) {
+        memcpy(v_out, &state->v[frame*6], 6*sizeof(rd_real_t));
+    } else {
+        rd_spatial_transform_motion_inv(&state->T_dyn[frame*16],
+                                        &state->v[chain->dyn_parent[frame]*6],
+                                        v_out);
+    }
+}
+
 static RD_INLINE rd_int_t algo_vel_index(const rd_chain_t* chain, rd_idx_t node) {
     rd_idx_t jidx = chain->joint_idx[node];
     if (jidx < 0 || chain->joint_type[node] == RD_JOINT_FIXED ||
@@ -280,7 +175,7 @@ rd_status_t rd_forward_kinematics(const rd_chain_t* chain,
                                   rd_real_t T_out[16]) {
     if (!chain || !state || !T_out) return RD_ERR_NULL_PTR;
     if (frame_id < 0 || frame_id >= chain->n_nodes) return RD_ERR_INVALID_INDEX;
-    memcpy(T_out, &state->T_world[frame_id*16], 16*sizeof(rd_real_t));
+    algo_frame_world(chain, state, frame_id, T_out);
     return RD_OK;
 }
 
@@ -329,8 +224,9 @@ rd_status_t rd_jacobian(const rd_chain_t* chain,
     }
 
     if (ref_frame == RD_FRAME_LOCAL) {
-        rd_real_t T_f_w[16];
-        rd_mat4_inv(&state->T_world[frame_id*16], T_f_w);
+        rd_real_t Tw[16], T_f_w[16];
+        algo_frame_world(chain, state, frame_id, Tw);
+        rd_mat4_inv(Tw, T_f_w);
         rd_real_t in[6], out[6];
         for (rd_int_t c = 0; c < nv; ++c) {
             for (int r = 0; r < 6; ++r) in[r] = J_out[r*nv + c];
@@ -349,11 +245,14 @@ rd_status_t rd_spatial_velocity(const rd_chain_t* chain,
     if (!chain || !state || !v_out) return RD_ERR_NULL_PTR;
     if (frame_id < 0 || frame_id >= chain->n_nodes) return RD_ERR_INVALID_INDEX;
 
-    const rd_real_t* v_local = &state->v[frame_id * 6];
+    rd_real_t v_local[6];
+    algo_frame_velocity(chain, state, frame_id, v_local);
     if (ref_frame == RD_FRAME_LOCAL) {
         memcpy(v_out, v_local, 6 * sizeof(rd_real_t));
     } else {
-        rd_spatial_transform_motion(&state->T_world[frame_id * 16], v_local, v_out);
+        rd_real_t Tw[16];
+        algo_frame_world(chain, state, frame_id, Tw);
+        rd_spatial_transform_motion(Tw, v_local, v_out);
     }
     return RD_OK;
 }
@@ -367,13 +266,12 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
     if (!chain || !state || !a_out) return RD_ERR_NULL_PTR;
     if (frame_id < 0 || frame_id >= chain->n_nodes) return RD_ERR_INVALID_INDEX;
 
-    const rd_int_t n = chain->n_nodes;
     rd_real_t* a = state->accel;
 
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
-        const rd_real_t* Ti  = &state->Ti[node*16];
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_real_t* Td  = &state->T_dyn[node*16];
         const rd_real_t* v_i = &state->v[node*6];
         const rd_real_t* S_i = &state->S[node*6];
 
@@ -387,7 +285,7 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
                 memset(a_p, 0, 6*sizeof(rd_real_t));
             }
         } else {
-            rd_spatial_transform_motion(Ti, &a[parent*6], a_p);
+            rd_spatial_transform_motion_inv(Td, &a[parent*6], a_p);
         }
 
         rd_int_t vi = algo_vel_index(chain, node);
@@ -402,10 +300,21 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
         }
     }
 
-    if (ref_frame == RD_FRAME_WORLD) {
-        rd_spatial_transform_motion(&state->T_world[frame_id*16], &a[frame_id*6], a_out);
+    /* A fixed link is rigidly attached to its moving ancestor, so its
+     * acceleration is that one transformed -- no joint or Coriolis term. */
+    rd_real_t a_f[6];
+    if (rd_chain_node_is_dynamic(chain, frame_id)) {
+        memcpy(a_f, &a[frame_id*6], 6*sizeof(rd_real_t));
     } else {
-        memcpy(a_out, &a[frame_id*6], 6*sizeof(rd_real_t));
+        rd_spatial_transform_motion_inv(&state->T_dyn[frame_id*16],
+                                        &a[chain->dyn_parent[frame_id]*6], a_f);
+    }
+    if (ref_frame == RD_FRAME_WORLD) {
+        rd_real_t Tw[16];
+        algo_frame_world(chain, state, frame_id, Tw);
+        rd_spatial_transform_motion(Tw, a_f, a_out);
+    } else {
+        memcpy(a_out, a_f, 6*sizeof(rd_real_t));
     }
     return RD_OK;
 }
@@ -428,7 +337,6 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
                              rd_real_t* tau_out) {
     if (!chain || !state || !tau_out) return RD_ERR_NULL_PTR;
 
-    const rd_int_t n  = chain->n_nodes;
     const rd_int_t nv = rd_chain_get_nv(chain);
     rd_real_t* a = state->accel;
     rd_real_t* f = state->force;
@@ -438,23 +346,25 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
 
     memset(tau_out, 0, (size_t)nv * sizeof(rd_real_t));
 
-    /* Outward: accelerations */
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
-        const rd_real_t* Ti  = &state->Ti[node*16];
+    /* Outward: accelerations. Over the dynamics tree, so fixed links -- whose
+     * inertia rd_chain_build already folded into the moving node above them --
+     * are never visited. */
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_real_t* Td  = &state->T_dyn[node*16];
         const rd_real_t* S_i = &state->S[node*6];
 
         rd_real_t a_p[6];
         if (parent == -1) {
-            /* Ti maps world -> root body, putting gravity in the same frame as
-             * the caller's base acceleration. */
-            rd_spatial_transform_motion(Ti, g_world, a_p);
+            /* Puts gravity in the root body frame, where the caller's base
+             * acceleration already is. */
+            rd_spatial_transform_motion_inv(Td, g_world, a_p);
             if (chain->has_floating_base && qdd) {
                 for (int k = 0; k < 6; ++k) a_p[k] += qdd[k];
             }
         } else {
-            rd_spatial_transform_motion(Ti, &a[parent*6], a_p);
+            rd_spatial_transform_motion_inv(Td, &a[parent*6], a_p);
         }
 
         rd_int_t vi = algo_vel_index(chain, node);
@@ -475,8 +385,8 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
     }
 
     /* Inward: forces */
-    for (rd_int_t ti = n-1; ti >= 0; --ti) {
-        rd_idx_t node = chain->topo_order[ti];
+    for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+        rd_idx_t node = chain->dyn_order[di];
         rd_real_t* f_i = &f[node*6];
         const rd_real_t* I_i = &chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN];
 
@@ -492,11 +402,12 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
             for (int k = 0; k < 6; ++k) f_i[k] = Ia[k];
         }
 
-        rd_int_t n_children = chain->children_count[node];
-        for (rd_int_t ci = 0; ci < n_children; ++ci) {
-            rd_idx_t child = chain->children_list[node * n + ci];
+        const rd_int_t c0 = chain->dyn_child_start[node];
+        const rd_int_t c1 = chain->dyn_child_start[node + 1];
+        for (rd_int_t ci = c0; ci < c1; ++ci) {
+            rd_idx_t child = chain->dyn_child[ci];
             rd_real_t f_child[6];
-            rd_spatial_transform_force(&state->T_parent_to_child[child*16],
+            rd_spatial_transform_force(&state->T_dyn[child*16],
                                        &f[child*6], f_child);
             for (int k = 0; k < 6; ++k) f_i[k] += f_child[k];
         }
@@ -507,8 +418,8 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
     if (chain->has_floating_base) {
         for (int k = 0; k < 6; ++k) tau_out[k] = f[root*6 + k];
     }
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node = chain->topo_order[ti];
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node = chain->dyn_order[di];
         rd_int_t vi = algo_vel_index(chain, node);
         if (vi < 0) continue;
         rd_real_t val = RD_REAL(0.0);
@@ -548,20 +459,27 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
                     rd_real_t* M_out) {
     if (!chain || !state || !M_out) return RD_ERR_NULL_PTR;
 
-    const rd_int_t n  = chain->n_nodes;
     const rd_int_t nv = rd_chain_get_nv(chain);
     rd_real_t* Ic = state->inertia;
 
-    memcpy(Ic, chain->spatial_inertias, (size_t)n * 36 * sizeof(rd_real_t));
     memset(M_out, 0, (size_t)nv * nv * sizeof(rd_real_t));
 
+    /* Only the dynamics nodes carry inertia after the fold, so only they need
+     * seeding -- on Go2 that is 13 copies of 36 floats instead of 31. */
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node = chain->dyn_order[di];
+        memcpy(&Ic[node*36], &chain->spatial_inertias[node*36],
+               36 * sizeof(rd_real_t));
+    }
+
     /* Inward: composite inertia */
-    for (rd_int_t ti = n-1; ti >= 0; --ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
+    for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
         if (parent != -1) {
-            algo_transform_inertia_accumulate(&state->Ti[node*16],
-                                              &Ic[node*36], &Ic[parent*36]);
+            rd_real_t Ti[16];
+            rd_mat4_inv(&state->T_dyn[node*16], Ti);
+            algo_transform_inertia_accumulate(Ti, &Ic[node*36], &Ic[parent*36]);
         }
     }
 
@@ -573,8 +491,8 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
                 M_out[r*nv + c] = Ic_root[r*6 + c];
     }
 
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node = chain->topo_order[ti];
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node = chain->dyn_order[di];
         rd_int_t col = algo_vel_index(chain, node);
         if (col < 0) continue;
 
@@ -595,11 +513,11 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
         memcpy(f_prop, F, 6*sizeof(rd_real_t));
         rd_idx_t curr = node;
         for (;;) {
-            rd_idx_t par = chain->parent_list[curr];
+            rd_idx_t par = chain->dyn_parent[curr];
             if (par == -1) break;
 
             rd_real_t f_new[6];
-            rd_spatial_transform_force(&state->T_parent_to_child[curr*16], f_prop, f_new);
+            rd_spatial_transform_force(&state->T_dyn[curr*16], f_prop, f_new);
             memcpy(f_prop, f_new, 6*sizeof(rd_real_t));
             curr = par;
 
@@ -632,7 +550,6 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
                    rd_real_t* qdd_out) {
     if (!chain || !state || !qdd_out) return RD_ERR_NULL_PTR;
 
-    const rd_int_t n  = chain->n_nodes;
     const rd_int_t nv = rd_chain_get_nv(chain);
 
     rd_real_t* IA = state->inertia;   /* articulated body inertia, 36*n */
@@ -646,12 +563,13 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     memset(qdd_out, 0, (size_t)nv * sizeof(rd_real_t));
 
     /* --- Pass 1 (outward): bias forces and velocity-product accelerations -- */
-    memcpy(IA, chain->spatial_inertias, (size_t)n * 36 * sizeof(rd_real_t));
-
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* v_i = &state->v[node*6];
+
+        memcpy(&IA[node*36], &chain->spatial_inertias[node*36],
+               36 * sizeof(rd_real_t));
 
         rd_real_t vj[6];
         algo_joint_velocity(chain, state, node, parent, vj);
@@ -664,9 +582,9 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     }
 
     /* --- Pass 2 (inward): articulate the inertias -------------------------- */
-    for (rd_int_t ti = n-1; ti >= 0; --ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
+    for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* S_i = &state->S[node*6];
         rd_int_t vi = algo_vel_index(chain, node);
 
@@ -710,9 +628,11 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         }
 
         if (parent != -1) {
-            algo_transform_inertia_accumulate(&state->Ti[node*16], Ia, &IA[parent*36]);
+            rd_real_t Tinv[16];
+            rd_mat4_inv(&state->T_dyn[node*16], Tinv);
+            algo_transform_inertia_accumulate(Tinv, Ia, &IA[parent*36]);
             rd_real_t pf[6];
-            rd_spatial_transform_force(&state->T_parent_to_child[node*16], pa, pf);
+            rd_spatial_transform_force(&state->T_dyn[node*16], pa, pf);
             for (int k = 0; k < 6; ++k) pA[parent*6 + k] += pf[k];
         }
         /* For the root, Ia and pa already alias IA[node]/pA[node], which is
@@ -723,10 +643,10 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     rd_real_t g_world[6];
     algo_gravity_world(gravity, g_world);
 
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node   = chain->topo_order[ti];
-        rd_idx_t parent = chain->parent_list[node];
-        const rd_real_t* Ti  = &state->Ti[node*16];
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node   = chain->dyn_order[di];
+        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_real_t* Td  = &state->T_dyn[node*16];
         const rd_real_t* S_i = &state->S[node*6];
         rd_int_t vi = algo_vel_index(chain, node);
 
@@ -739,9 +659,9 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
          */
         rd_real_t a_p[6];
         if (parent == -1) {
-            rd_spatial_transform_motion(Ti, g_world, a_p);
+            rd_spatial_transform_motion_inv(Td, g_world, a_p);
         } else {
-            rd_spatial_transform_motion(Ti, &a[parent*6], a_p);
+            rd_spatial_transform_motion_inv(Td, &a[parent*6], a_p);
         }
         for (int k = 0; k < 6; ++k) a_p[k] += c[node*6 + k];
 

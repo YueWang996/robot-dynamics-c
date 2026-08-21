@@ -236,7 +236,8 @@ static RD_INLINE int rd_mat4_axis_rotation(const rd_real_t axis[3], rd_real_t q,
 }
 
 /* Ti = inv(T) for SE3 */
-static RD_INLINE void rd_mat4_inv(const rd_real_t T[16], rd_real_t Ti[16]) {
+static RD_INLINE void rd_mat4_inv(const rd_real_t* RD_RESTRICT T,
+                                  rd_real_t* RD_RESTRICT Ti) {
     rd_real_t R[9] = {T[0],T[4],T[8], T[1],T[5],T[9], T[2],T[6],T[10]};
     rd_real_t p[3] = {T[12], T[13], T[14]};
     
@@ -356,6 +357,145 @@ static RD_INLINE void rd_spatial_adjoint(const rd_real_t T[16], rd_real_t Ad[36]
     }
 }
 
+static RD_INLINE void rd_mat3_mul_skew(const rd_real_t A[9], const rd_real_t p[3],
+                                         rd_real_t out[9]) {
+    for (int i = 0; i < 3; ++i) {
+        const rd_real_t a0 = A[i*3+0], a1 = A[i*3+1], a2 = A[i*3+2];
+        out[i*3+0] =  a1*p[2] - a2*p[1];
+        out[i*3+1] = -a0*p[2] + a2*p[0];
+        out[i*3+2] =  a0*p[1] - a1*p[0];
+    }
+}
+
+/* out = [p]x * A, row-major 3x3. 18 mults. */
+static RD_INLINE void rd_skew_mul_mat3(const rd_real_t p[3], const rd_real_t A[9],
+                                         rd_real_t out[9]) {
+    for (int j = 0; j < 3; ++j) {
+        const rd_real_t a0 = A[0*3+j], a1 = A[1*3+j], a2 = A[2*3+j];
+        out[0*3+j] = -p[2]*a1 + p[1]*a2;
+        out[1*3+j] =  p[2]*a0 - p[0]*a2;
+        out[2*3+j] = -p[1]*a0 + p[0]*a1;
+    }
+}
+
+/* out = R^T * C * R, row-major 3x3. */
+static RD_INLINE void rd_congruence3(const rd_real_t R[9], const rd_real_t C[9],
+                                       rd_real_t out[9]) {
+    rd_real_t CR[9];
+    rd_mat3_mul(C, R, CR);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out[i*3+j] = R[0*3+i]*CR[0*3+j]
+                       + R[1*3+i]*CR[1*3+j]
+                       + R[2*3+i]*CR[2*3+j];
+        }
+    }
+}
+
+/* dst[3x3 block at stride 6] += R^T * C * R, without materialising the result. */
+static RD_INLINE void rd_congruence3_accum(const rd_real_t R[9], const rd_real_t C[9],
+                                             rd_real_t* dst) {
+    rd_real_t CR[9];
+    rd_mat3_mul(C, R, CR);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            dst[i*6+j] += R[0*3+i]*CR[0*3+j]
+                        + R[1*3+i]*CR[1*3+j]
+                        + R[2*3+i]*CR[2*3+j];
+        }
+    }
+}
+
+/*
+ * I_accum += X^T * I_in * X, with X = Ad(T).
+ *
+ * Callers pass state->Ti, the pose of the parent expressed in the child, which
+ * makes X the motion transform from the parent frame into the child's. That is
+ * the direction the composite/articulated inertia congruence needs.
+ *
+ * This is the hot spot of both rd_crba() and rd_aba(), so it is written against
+ * the structure rather than as two dense 6x6 products. Writing
+ * I = [[A11, A12], [A21, A22]] and X = [[R, [p]x R], [0, R]], the congruence is
+ *
+ *   TL = R^T A11 R
+ *   TR = R^T (A11 P + A12) R                       P = [p]x
+ *   BL = TR^T
+ *   BR = R^T (A22 + A21 P + (A21 P)^T - P A11 P) R
+ *
+ * which needs 216 multiplies instead of 432, skips X's 3x3 zero block entirely,
+ * gets the lower-left triangle for free from symmetry, and never materialises a
+ * 6x6 temporary.
+ */
+static RD_INLINE void rd_spatial_inertia_congruence(const rd_real_t* RD_RESTRICT T,
+                                              const rd_real_t* RD_RESTRICT I_in,
+                                              rd_real_t* RD_RESTRICT I_accum) {
+    /* R row-major, p, out of the column-major T */
+    const rd_real_t R[9] = { T[0], T[4], T[8],
+                             T[1], T[5], T[9],
+                             T[2], T[6], T[10] };
+    const rd_real_t p[3] = { T[12], T[13], T[14] };
+
+    /*
+     * Only three 3x3 temporaries live at once. The obvious version -- pull
+     * A11/A12/A21/A22 out, build C12/C22, then materialise S11/S12/S22 --
+     * needs twelve, which is more than the M33's 32 single-precision registers
+     * can hold, so it spills to stack and reloads. On a core where this code is
+     * memory-bound rather than multiply-bound, that costs more than the
+     * multiplies saved.
+     */
+    rd_real_t A11[9], C[9], S12[9];
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) A11[i*3+j] = I_in[i*6 + j];
+    }
+
+    /* TL += R^T A11 R */
+    rd_congruence3_accum(R, A11, I_accum);
+
+    /* C = A11 P + A12,   then TR += R^T C R  and  BL += (that)^T */
+    rd_mat3_mul_skew(A11, p, C);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) C[i*3+j] += I_in[i*6 + 3 + j];
+    }
+    rd_congruence3(R, C, S12);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            I_accum[i*6 + 3 + j] += S12[i*3+j];
+            I_accum[(i+3)*6 + j] += S12[j*3+i];        /* BL = TR^T */
+        }
+    }
+
+    /* C = A22 + A21 P + (A21 P)^T - P A11 P,  then BR += R^T C R */
+    {
+        rd_real_t t[9];
+        rd_skew_mul_mat3(p, A11, t);                 /* P A11   */
+        rd_mat3_mul_skew(t, p, C);                   /* P A11 P */
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                t[i*3+j] = I_in[(i+3)*6 + j];          /* A21     */
+            }
+        }
+        rd_real_t A21P[9];
+        rd_mat3_mul_skew(t, p, A21P);
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                C[i*3+j] = I_in[(i+3)*6 + 3 + j] + A21P[i*3+j] + A21P[j*3+i]
+                         - C[i*3+j];
+            }
+        }
+    }
+    rd_congruence3_accum(R, C, I_accum + 3*6 + 3);
+}
+
+/*
+ * Velocity of a link relative to its parent, i.e. S * qd.
+ *
+ * This is v_i - Ad(Ti) v_parent, but rd_update_kinematics() already formed it
+ * on the way to v_i, so the joint velocity it used is cached rather than the
+ * transform being run a second time. RNEA, ABA and rd_spatial_acceleration()
+ * each want this once per link.
+ */
+
 /* ============================================================================
  * 5. Sparse Spatial Algebra (High-Performance RNEA/Jacobian)
  * ============================================================================ */
@@ -363,9 +503,9 @@ static RD_INLINE void rd_spatial_adjoint(const rd_real_t T[16], rd_real_t Ad[36]
 /**
  * @brief Sparse Motion Transform: v_A = Ad(T_AB) * v_B
  */
-static RD_INLINE void rd_spatial_transform_motion(const rd_real_t T[16], 
-                                                  const rd_real_t v_in[6], 
-                                                  rd_real_t v_out[6]) {
+static RD_INLINE void rd_spatial_transform_motion(const rd_real_t* RD_RESTRICT T,
+                                                  const rd_real_t* RD_RESTRICT v_in,
+                                                  rd_real_t* RD_RESTRICT v_out) {
     /* R = T(0..2, 0..2) [row-major], p = T(0..2, 3) */
     rd_real_t wx = v_in[3], wy = v_in[4], wz = v_in[5];
     rd_real_t vx = v_in[0], vy = v_in[1], vz = v_in[2];
@@ -390,9 +530,35 @@ static RD_INLINE void rd_spatial_transform_motion(const rd_real_t T[16],
 /**
  * @brief Sparse Force Transform: f_A = Ad(T_BA)^T * f_B
  */
-static RD_INLINE void rd_spatial_transform_force(const rd_real_t T[16], 
-                                                 const rd_real_t f_in[6], 
-                                                 rd_real_t f_out[6]) {
+/* Motion transform by the inverse of T, without forming the inverse.
+ *
+ *   rd_spatial_transform_motion_inv(T, v, out) == rd_spatial_transform_motion(inv(T), v, out)
+ *
+ * Same operation count as the forward version, so a caller holding only the
+ * child-in-parent transform does not have to store the other direction too. */
+static RD_INLINE void rd_spatial_transform_motion_inv(const rd_real_t* RD_RESTRICT T,
+                                                      const rd_real_t* RD_RESTRICT v_in,
+                                                      rd_real_t* RD_RESTRICT v_out) {
+    rd_real_t wx = v_in[3], wy = v_in[4], wz = v_in[5];
+    rd_real_t px = T[12], py = T[13], pz = T[14];
+
+    /* v_in - p x w, before rotating back */
+    rd_real_t lx = v_in[0] - (py*wz - pz*wy);
+    rd_real_t ly = v_in[1] - (pz*wx - px*wz);
+    rd_real_t lz = v_in[2] - (px*wy - py*wx);
+
+    /* R^T applied to both halves */
+    v_out[0] = T[0]*lx + T[1]*ly + T[2]*lz;
+    v_out[1] = T[4]*lx + T[5]*ly + T[6]*lz;
+    v_out[2] = T[8]*lx + T[9]*ly + T[10]*lz;
+    v_out[3] = T[0]*wx + T[1]*wy + T[2]*wz;
+    v_out[4] = T[4]*wx + T[5]*wy + T[6]*wz;
+    v_out[5] = T[8]*wx + T[9]*wy + T[10]*wz;
+}
+
+static RD_INLINE void rd_spatial_transform_force(const rd_real_t* RD_RESTRICT T,
+                                                 const rd_real_t* RD_RESTRICT f_in,
+                                                 rd_real_t* RD_RESTRICT f_out) {
     rd_real_t fx = f_in[0], fy = f_in[1], fz = f_in[2];
     rd_real_t tx = f_in[3], ty = f_in[4], tz = f_in[5];
 

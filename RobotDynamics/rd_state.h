@@ -45,7 +45,7 @@ extern "C" {
  * velocity, a joint subspace, a joint velocity); scratch is 62, sized by the
  * largest consumer, which is rd_aba().
  */
-#define RD_STATE_FLOATS_PER_NODE  123
+#define RD_STATE_FLOATS_PER_NODE  107
 
 /** Elements to declare for a statically sized state buffer. */
 #define RD_STATE_BUF_FLOATS(n)    ((n) * RD_STATE_FLOATS_PER_NODE + 16)
@@ -56,9 +56,16 @@ extern "C" {
 
 typedef struct {
     /* --- Cache: filled by rd_update_kinematics(), read by everything ------ */
-    rd_real_t* T_parent_to_child; /**< 16*n, pose of each link in its parent */
-    rd_real_t* Ti;                /**< 16*n, pose of each parent in its child */
+
     rd_real_t* T_world;           /**< 16*n, pose of each link in the world */
+    rd_real_t* T_dyn;             /**< 16*n, pose of each link in its nearest
+                                   *   moving ancestor -- the pose in the parent
+                                   *   when that parent can move, and otherwise
+                                   *   composed through the fixed links between.
+                                   *   This is what lets RNEA, CRBA and ABA skip
+                                   *   fixed links, and T_world is built from it
+                                   *   rather than from a parent-to-child chain,
+                                   *   so no separate array is needed. */
     rd_real_t* v;                 /**< 6*n, spatial velocity, link body frame */
     rd_real_t* S;                 /**< 6*n, joint motion subspace */
     rd_real_t* vj;                /**< n, joint velocity. S[i]*vj[i] is the link's
@@ -104,7 +111,7 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n_nodes,
  * @brief Compute the shared kinematics for this tick. Call once per control
  *        loop, before any other algorithm.
  *
- * Fills T_parent_to_child, Ti, T_world, S and v.
+ * Fills T_dyn, T_world, S and v.
  *
  * @param q_base   [7] base pose, or NULL to place the base at the identity.
  *                 Ignored for fixed-base models.

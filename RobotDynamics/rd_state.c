@@ -54,9 +54,8 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
      * match a chain pointer would silently skip computing every transform. */
     state->cached_for = NULL;
 
-    state->T_parent_to_child = buf + off; off += (size_t)n * 16;
-    state->Ti                = buf + off; off += (size_t)n * 16;
     state->T_world           = buf + off; off += (size_t)n * 16;
+    state->T_dyn             = buf + off; off += (size_t)n * 16;
     state->v                 = buf + off; off += (size_t)n * 6;
     state->S                 = buf + off; off += (size_t)n * 6;
     state->vj                = buf + off; off += (size_t)n;
@@ -86,8 +85,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
     /* Most of what this loop computes does not depend on the configuration at
      * all. The motion subspace S is a function of the joint axis and the link
      * offset, so it is fixed once the chain is built -- for every node, moving
-     * or not. And for a node whose joint cannot move, so are T_parent_to_child
-     * and its inverse: two 4x4 SE3 composes and an inverse per tick, arriving
+     * or not. And for a node whose joint cannot move, so is T_dyn: two 4x4 SE3 composes and an inverse per tick, arriving
      * at the same numbers forever. That is not a rare case. A robot's fixture
      * links -- feet, sensor mounts, inertial frames -- are all fixed joints,
      * and Go2 has 18 of them out of 30 nodes.
@@ -111,13 +109,19 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         /* Nothing the configuration carries can move this node in its parent. */
         const int immovable = !root_fb && !actuated;
 
-        rd_real_t* T_pc = &state->T_parent_to_child[node*16];
-        rd_real_t* Ti   = &state->Ti[node*16];
+        rd_real_t* Td   = &state->T_dyn[node*16];
         rd_real_t* S_i  = &state->S[node*6];
 
-        /* 1. Transform from the parent link to this one */
+        /* Built straight into T_dyn when the parent can move, because then the
+         * two are the same transform and a copy would be pure waste. */
+        const int under_dyn = (parent == -1) ||
+                              rd_chain_node_is_dynamic(chain, parent);
+
+        /* 1. Pose in the nearest moving ancestor */
         if (!immovable || !cached) {
-            rd_real_t Ttmp[16];
+            rd_real_t T_local[16], Ttmp[16];
+            rd_real_t* T_pc = under_dyn ? Td : T_local;
+
             if (root_fb) {
                 /* The root's "joint" is the 6-DOF base pose. It composes ahead
                  * of the link's own offsets, which is the order rd_fk_frame()
@@ -134,26 +138,17 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
             } else {
                 /* The joint contributes identity -- because it is fixed, or
-                 * because no configuration was supplied. Composing against it
-                 * costs 36 multiplies to copy the other two offsets through. */
+                 * because no configuration was supplied. */
                 rd_mat4_mul_se3(&chain->T_joint_offset[node*16],
                                 &chain->T_link_offset[node*16], T_pc);
             }
-            rd_mat4_inv(T_pc, Ti);
+            if (!under_dyn) {
+                rd_mat4_mul_se3(&state->T_dyn[parent*16], T_pc, Td);
+            }
         }
 
-        /* 2. Pose in the world */
-        rd_real_t* Tw = &state->T_world[node*16];
-        if (parent == -1) {
-            /* T_pc already carries the base pose for a floating base, and is
-             * relative to the world for a fixed one. */
-            memcpy(Tw, T_pc, 16*sizeof(rd_real_t));
-        } else {
-            rd_mat4_mul_se3(&state->T_world[parent*16], T_pc, Tw);
-        }
-
-        /* 3. Joint motion subspace -- axis and link offset only, so it is the
-         *    same on every tick. Only the joint's velocity is per-tick. */
+        /* 2. Joint motion subspace -- axis and link offset only, so it is
+         *    the same on every tick. */
         if (!cached) {
             if (actuated) {
                 const rd_real_t* axis = &chain->axes[jidx*3];
@@ -167,10 +162,35 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                                             twist, S_i);
             } else {
                 memset(S_i, 0, 6*sizeof(rd_real_t));
+                state->vj[node] = RD_REAL(0.0);
             }
         }
+
+        /* Nothing below changes for a *fixed link*: its pose and velocity
+         * relative to the nearest moving ancestor are the constants just
+         * cached, and the world-frame values are one transform
+         * away. rd_forward_kinematics(), rd_spatial_velocity(),
+         * rd_jacobian() and rd_spatial_acceleration() do that transform when
+         * asked, which is cheaper than doing it here for every fixed link on
+         * every tick when most are never queried.
+         *
+         * The root of a fixed-base model is immovable but is still a dynamics
+         * node, and everything else is expressed relative to it, so it does
+         * not take this exit. */
+        if (immovable && !rd_chain_node_is_dynamic(chain, node)) continue;
+
         rd_real_t v_joint = (actuated && qd) ? qd[base_dof + jidx] : RD_REAL(0.0);
         state->vj[node] = v_joint;
+
+        /* 3. Pose in the world, reached through the nearest moving ancestor
+         *    rather than the immediate parent: one compose either way, and
+         *    this way the fixed links in between need not be visited. */
+        rd_real_t* Tw = &state->T_world[node*16];
+        {
+            rd_idx_t danc = chain->dyn_parent[node];
+            if (danc == -1) memcpy(Tw, Td, 16*sizeof(rd_real_t));
+            else rd_mat4_mul_se3(&state->T_world[danc*16], Td, Tw);
+        }
 
         /* 4. Spatial velocity, in this link's body frame */
         rd_real_t* v_i = &state->v[node*6];
@@ -181,13 +201,12 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 memset(v_i, 0, 6*sizeof(rd_real_t));
             }
         } else {
-            /* node != parent, so this may land straight in v_i. */
-            rd_spatial_transform_motion(Ti, &state->v[parent*6], v_i);
-            /* S is zero on an immovable node; branch on the structure rather
-             * than on qd being zero, so a robot at rest is not timed as if it
-             * were faster than one in motion. */
+            /* Inherited from the nearest moving ancestor, for the same reason
+             * as the pose above. */
+            rd_spatial_transform_motion_inv(Td, &state->v[chain->dyn_parent[node]*6],
+                                            v_i);
             if (actuated) {
-                for (int k = 0; k < 6; ++k) v_i[k] += S_i[k] * v_joint;
+                for (int kk = 0; kk < 6; ++kk) v_i[kk] += S_i[kk] * v_joint;
             }
         }
     }

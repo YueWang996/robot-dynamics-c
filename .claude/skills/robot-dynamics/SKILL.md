@@ -49,7 +49,7 @@ Get any of these backwards and nothing complains — you just get a wrong robot.
 | | This library | Note |
 |---|---|---|
 | Base quaternion | `q_base = [x y z qw qx qy qz]` — **scalar first** | Pinocchio and ROS are scalar-**last**. Feeding a Pinocchio `q` straight in gives a plausible but wrong pose. |
-| Base twist / accel frame | root link's **body frame** | not world. Matches Pinocchio's free-flyer. To convert a world twist: `rd_spatial_transform_motion(state.Ti + root*16, v_world, qd)`. |
+| Base twist / accel frame | root link's **body frame** | not world. Matches Pinocchio's free-flyer. To convert a world twist: `rd_spatial_transform_motion_inv(state.T_dyn + root*16, v_world, qd)`. |
 | Spatial vector order | `[linear, angular]` | same as Pinocchio |
 | `q_joints` | length `nj`, joints only | configuration is split because nq ≠ nv |
 | `qd`, `qdd`, `tau` | length **`nv`**, packed, base in the first six | `nv = 6 + nj` floating, `nj` fixed |
@@ -172,9 +172,8 @@ Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
 operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 555 µs (1.8 kHz).
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 271 µs
-(3.7 kHz) for torque and 731 µs (1.4 kHz) for operational space. An
-**STM32L413 at 80 MHz** gives 567 µs (1.8 kHz) for torque. The two M4F parts
+On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 168 µs
+(6.0 kHz) for torque and 414 µs (2.4 kHz) for operational space. The two M4F parts
 agree within 4% on cycles per call (median 0.98×), so **scale any other
 Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
 the M33's cycles for this workload, and running from flash costs another ~17%.
@@ -183,18 +182,23 @@ Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
 with path depth only (~3 µs per level — much cheaper than a full update if you
 need one frame), `aba` at ~13 µs per link.
 
-**The RP2350 numbers above are stale.** They predate the traversal caching and
-are pessimistic on `update_kinematics` by up to ~40%; the STM32 and ESP32
-figures are current. Say so rather than quoting them as current.
+**Only the STM32G474 figures are current.** Everything else here predates
+folding fixed links out of the dynamics and is pessimistic by up to ~50% on
+`rnea`, `crba` and `aba`. Say so rather than quoting them as current.
 
 **Where the time actually goes.** `update_kinematics` dominates a tick and
 everything else reads the cache it builds, so `rnea`, `crba`, `aba`, `fk_frame`
 and the Jacobians are unaffected by anything done to it. Two facts follow:
 
-- **Fixed joints are most of a real robot.** Feet, sensor mounts and inertial
-  frames are all fixed nodes — Go2 is 18 of 30 — and their transforms are chain
-  constants. The library caches them per (chain, state) pairing, worth −39% on
-  Go2's `update_kinematics`, measured the same on two different Cortex-M4F parts. If a user reports it recomputing every tick, check
+- **Fixed joints are most of a real robot**, and cost almost nothing now. Feet,
+  sensor mounts and inertial frames are all fixed nodes — Go2 is 18 of 30.
+  `rd_chain_build` folds each one's inertia into its nearest moving ancestor and
+  the dynamics traverse only the moving nodes, worth −53% on `rnea`, −47% on
+  `crba` and −51% on `aba`. `rd_update_kinematics` refreshes only moving links
+  too; a fixed link's pose and velocity are resolved by the accessor that asks
+  for them. **Read frames through `rd_forward_kinematics` / `rd_spatial_velocity`,
+  never from `state->T_world` directly** — for a fixed link that slot is not
+  maintained. If a user reports it recomputing every tick, check
   they are not re-initialising the state each loop: that throws the cache away.
 - **libm is worth ~9% of it**, no more. `RD_FAST_TRIG=1` buys 5–6% of a tick.
   Flash wait states cost `update_kinematics` ~50% on Cortex-M4F against 2% for

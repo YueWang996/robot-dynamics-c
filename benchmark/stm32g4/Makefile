@@ -48,7 +48,10 @@ ifeq ($(ZEROWS),1)
 endif
 
 ifeq ($(RAM),1)
-  LDSCRIPT := STM32G474_RAM.ld
+  # e.g. make EXTRA=-ffast-math
+CFLAGS += $(EXTRA)
+
+LDSCRIPT := STM32G474_RAM.ld
   CFLAGS   += -DBENCH_G4_RAM=1
 else
   LDSCRIPT := STM32G474RETX_FLASH.ld

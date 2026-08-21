@@ -59,8 +59,37 @@ typedef struct {
     /* Same inertias in the ten-number packed form, for I*v products.
      * See rd_spatial_inertia_mul(). Size n_nodes * RD_INERTIA_COMPACT_LEN. */
     rd_real_t* inertia_compact;
-    
+
+    /* ---- Dynamics tree ---------------------------------------------------
+     * A fixed joint adds a frame but no degree of freedom, and on a real robot
+     * most nodes are fixed: feet, sensor mounts and inertial frames. Walking
+     * them in RNEA, CRBA and ABA costs 63-84% of what a real joint costs and
+     * buys nothing, so those three traverse this reduced tree instead: only
+     * nodes whose joint can move, plus the root.
+     *
+     * Each fixed link's spatial inertia is folded into its nearest moving
+     * ancestor at build time, so `spatial_inertias` and `inertia_compact` hold
+     * *composite* bodies -- a moving node carries the mass of the fixed links
+     * hanging off it, and a fixed node's own entry is zero. Total mass and the
+     * dynamics are unchanged; the per-link split is not recoverable from here
+     * afterwards. Kinematics still walks every node, so every frame keeps its
+     * own pose, velocity and Jacobian. */
+    rd_int_t   n_dyn;              /**< Number of dynamics nodes */
+    rd_idx_t*  dyn_order;          /**< n_dyn, topological */
+    rd_idx_t*  dyn_parent;         /**< n_nodes, nearest moving ancestor or -1 */
+    rd_idx_t*  dyn_child;          /**< n_nodes, CSR values */
+    rd_int_t*  dyn_child_start;    /**< n_nodes+1, CSR offsets indexed by node */
+
 } rd_chain_t;
+
+/** Does this node carry a degree of freedom (or is it the root)? */
+static RD_INLINE int rd_chain_node_is_dynamic(const rd_chain_t* chain,
+                                              rd_idx_t node) {
+    if (chain->parent_list[node] == -1) return 1;
+    if (chain->joint_idx[node] < 0) return 0;
+    return chain->joint_type[node] == RD_JOINT_REVOLUTE ||
+           chain->joint_type[node] == RD_JOINT_PRISMATIC;
+}
 
 /* ============================================================================
  * Chain API Functions

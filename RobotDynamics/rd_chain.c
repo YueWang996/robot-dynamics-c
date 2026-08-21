@@ -46,6 +46,10 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
     chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
     chain->spatial_inertias = (rd_real_t*)RD_CALLOC(n * 36, sizeof(rd_real_t));
+    chain->dyn_order = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->dyn_parent = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->dyn_child = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
+    chain->dyn_child_start = (rd_int_t*)RD_CALLOC(n + 1, sizeof(rd_int_t));
     chain->inertia_compact = (rd_real_t*)RD_CALLOC(n * RD_INERTIA_COMPACT_LEN,
                                                    sizeof(rd_real_t));
 
@@ -58,7 +62,9 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         !chain->children_list || !chain->joint_idx || !chain->joint_type ||
         !chain->axes || !chain->T_joint_offset || !chain->T_link_offset ||
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
-        !chain->spatial_inertias || !chain->inertia_compact) {
+        !chain->spatial_inertias || !chain->inertia_compact ||
+        !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
+        !chain->dyn_child_start) {
         rd_chain_free(chain);
         return RD_ERR_ALLOC_FAILED;
     }
@@ -248,6 +254,113 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         }
     }
 
+    /* ---- Dynamics tree ---------------------------------------------------
+     * Nearest moving ancestor, by walking up rather than relying on the order
+     * topo_order happens to have produced. */
+    for (rd_int_t i = 0; i < n; ++i) {
+        rd_idx_t p = chain->parent_list[i];
+        while (p != -1 && !rd_chain_node_is_dynamic(chain, p)) {
+            p = chain->parent_list[p];
+        }
+        chain->dyn_parent[i] = p;
+    }
+
+    /* Dynamics nodes, keeping topo_order's ordering so parents still precede
+     * children. */
+    chain->n_dyn = 0;
+    for (rd_int_t ti = 0; ti < n; ++ti) {
+        rd_idx_t node = chain->topo_order[ti];
+        if (rd_chain_node_is_dynamic(chain, node)) {
+            chain->dyn_order[chain->n_dyn++] = node;
+        }
+    }
+
+    /* CSR of dynamics children, indexed by node. */
+    for (rd_int_t i = 0; i <= n; ++i) chain->dyn_child_start[i] = 0;
+    for (rd_int_t i = 0; i < n; ++i) {
+        if (!rd_chain_node_is_dynamic(chain, (rd_idx_t)i)) continue;
+        rd_idx_t p = chain->dyn_parent[i];
+        if (p >= 0) chain->dyn_child_start[p + 1]++;
+    }
+    for (rd_int_t i = 0; i < n; ++i) {
+        chain->dyn_child_start[i + 1] += chain->dyn_child_start[i];
+    }
+    {
+        rd_int_t* fill = (rd_int_t*)RD_CALLOC(n, sizeof(rd_int_t));
+        if (!fill) { rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
+        for (rd_int_t ti = 0; ti < n; ++ti) {
+            rd_idx_t node = chain->topo_order[ti];
+            if (!rd_chain_node_is_dynamic(chain, node)) continue;
+            rd_idx_t p = chain->dyn_parent[node];
+            if (p < 0) continue;
+            chain->dyn_child[chain->dyn_child_start[p] + fill[p]] = node;
+            fill[p]++;
+        }
+        RD_FREE(fill);
+    }
+
+    /* ---- Fold fixed links into their nearest moving ancestor -------------
+     * A fixed node's pose in that ancestor is a constant: its own offsets
+     * composed with those of any fixed nodes in between. */
+    {
+        rd_real_t* Tf = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * (size_t)n * 16);
+        if (!Tf) { rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
+
+        for (rd_int_t i = 0; i < n; ++i) {
+            rd_real_t acc[16], tmp[16];
+            rd_mat4_mul_se3(&chain->T_joint_offset[i*16],
+                            &chain->T_link_offset[i*16], acc);
+            rd_idx_t p = chain->parent_list[i];
+            while (p != -1 && !rd_chain_node_is_dynamic(chain, p)) {
+                rd_real_t up[16];
+                rd_mat4_mul_se3(&chain->T_joint_offset[p*16],
+                                &chain->T_link_offset[p*16], up);
+                rd_mat4_mul_se3(up, acc, tmp);
+                memcpy(acc, tmp, 16 * sizeof(rd_real_t));
+                p = chain->parent_list[p];
+            }
+            memcpy(&Tf[i*16], acc, 16 * sizeof(rd_real_t));
+        }
+
+        /* Each fixed node folds straight into its dynamics ancestor, never
+         * into an intermediate fixed node, so no entry is read after it has
+         * been written and the order does not matter. */
+        for (rd_int_t i = 0; i < n; ++i) {
+            if (rd_chain_node_is_dynamic(chain, (rd_idx_t)i)) continue;
+            rd_idx_t a = chain->dyn_parent[i];
+            if (a < 0) continue;
+            rd_real_t Ti[16];
+            rd_mat4_inv(&Tf[i*16], Ti);
+            rd_spatial_inertia_congruence(Ti, &chain->spatial_inertias[i*36],
+                                          &chain->spatial_inertias[a*36]);
+            memset(&chain->spatial_inertias[i*36], 0, 36 * sizeof(rd_real_t));
+        }
+        RD_FREE(Tf);
+    }
+
+    /* Repack. A sum of rigid-body spatial inertias, and a congruence of one,
+     * is still a rigid-body spatial inertia, so the ten-number form survives
+     * the fold -- it just describes the composite body now. */
+    for (rd_int_t i = 0; i < n; ++i) {
+        const rd_real_t* Is = &chain->spatial_inertias[i*36];
+        rd_real_t* icp = &chain->inertia_compact[i * RD_INERTIA_COMPACT_LEN];
+        rd_real_t m = Is[0];
+        icp[0] = m;
+        if (m > RD_REAL(0.0)) {
+            icp[1] = -Is[4*6 + 2] / m;   /* cx from  m*[c]x */
+            icp[2] =  Is[3*6 + 2] / m;   /* cy */
+            icp[3] = -Is[3*6 + 1] / m;   /* cz */
+        } else {
+            icp[1] = icp[2] = icp[3] = RD_REAL(0.0);
+        }
+        icp[4] = Is[3*6 + 3];   /* Jxx */
+        icp[5] = Is[4*6 + 4];   /* Jyy */
+        icp[6] = Is[5*6 + 5];   /* Jzz */
+        icp[7] = Is[3*6 + 4];   /* Jxy */
+        icp[8] = Is[3*6 + 5];   /* Jxz */
+        icp[9] = Is[4*6 + 5];   /* Jyz */
+    }
+
     return RD_OK;
 }
 
@@ -275,6 +388,10 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->parent_path_len);
     RD_FREE(chain->spatial_inertias);
     RD_FREE(chain->inertia_compact);
+    RD_FREE(chain->dyn_order);
+    RD_FREE(chain->dyn_parent);
+    RD_FREE(chain->dyn_child);
+    RD_FREE(chain->dyn_child_start);
     
     /* Zero out the struct */
     memset(chain, 0, sizeof(rd_chain_t));
