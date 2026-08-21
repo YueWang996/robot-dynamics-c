@@ -66,8 +66,7 @@ extern "C" {
  * 1.9e-05, interpolating linearly between 512 table entries and giving up
  * accuracy float32 can resolve.
  *
- * RD_FAST_TRIG is off by default: a build option that changes results, however
- * slightly, should be opted into deliberately. */
+ * RD_FAST_TRIG is on by default; set it to 0 for libm's exact results. */
 #if RD_FAST_TRIG && RD_REAL_IS_FLOAT
 /* Cody-Waite reduction onto [-pi/4, pi/4] plus a quadrant, then Taylor series
  * carried far enough that the truncation error sits under a float32 ULP. Joint

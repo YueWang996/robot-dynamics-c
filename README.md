@@ -89,54 +89,56 @@ not grow with model size. Reproduce with `tools/validate.py`.
 
 ## Performance
 
-Microseconds per call, single precision, `-O3`. Raspberry Pi Pico 2 (RP2350),
-one Cortex-M33 at 150 MHz:
+Microseconds per call, single precision, `-O3`, on an STM32G474 (Cortex-M4F)
+at 170 MHz:
 
 | Algorithm | simple_arm<br><sub>2 dof</sub> | spine<br><sub>9 dof</sub> | xarm7<br><sub>7 dof</sub> | go2<br><sub>18 dof</sub> |
 |---|---|---|---|---|
-| `update_kinematics` | 16.18 | 23.17 | 55.48 | 155.17 |
-| `fk_frame` | 9.71 | 13.08 | 29.18 | 14.81 |
-| `jacobian_world` | 3.05 | 8.37 | 7.89 | 9.27 |
-| `rnea` | 13.25 | 17.80 | 42.35 | 125.03 |
-| `aba` | n/a | 59.03 | 136.77 | 399.64 |
-| `crba` | 19.32 | 31.90 | 94.55 | 234.43 |
-| `gravity` | 9.43 | 12.59 | 29.67 | 86.77 |
-| `spatial_velocity` | 1.06 | 1.05 | 1.05 | 1.06 |
+| `update_kinematics` | 8.86 | 12.14 | 23.58 | 38.59 |
+| `fk_frame` | 7.96 | 10.41 | 19.69 | 11.63 |
+| `jacobian_world` | 6.29 | 10.61 | 15.04 | 12.24 |
+| `jacobian_local` | 8.72 | 16.99 | 21.90 | 19.85 |
+| `rnea` | 14.04 | 18.24 | 32.27 | 51.43 |
+| `aba` | n/a | 56.43 | 103.66 | 179.88 |
+| `crba` | 10.43 | 18.70 | 40.51 | 60.95 |
+| `gravity` | 9.79 | 12.62 | 22.04 | 34.49 |
+| `spatial_acceleration` | 8.41 | 10.41 | 18.68 | 22.84 |
+| `spatial_velocity` | 3.08 | 3.75 | 7.00 | 4.68 |
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
 (`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
 
+What that buys per control tick on the same part:
+
+| Robot | dof | Torque tick | Operational space | Forward dynamics |
+|---|---|---|---|---|
+| `spine` | 9 | 30 µs — 32.9 kHz | 49 µs — 20.4 kHz | 69 µs — 14.6 kHz |
+| `xarm7` | 7 | 56 µs — 17.9 kHz | 96 µs — 10.4 kHz | 127 µs — 7.9 kHz |
+| `go2` | 18 | 90 µs — 11.1 kHz | 151 µs — 6.6 kHz | 219 µs — 4.6 kHz |
+
+Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
+forward dynamics is `update_kinematics` + `aba`.
+
 Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 
-| | M33 @ 150<br><sub>RP2350</sub> | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
+| | M4F @ 170<br><sub>G474</sub> | M33 @ 150<br><sub>RP2350</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 155.2 | **74.1** | 489.5 | 1458.8 | 1495.0 |
-| `rnea` | 125.0 | **57.0** | 270.7 | 1650.3 | 2324.4 |
-| `crba` | 234.4 | **110.8** | 971.5 | 2293.0 | 3627.7 |
-| `aba` | 399.6 | **191.2** | 1299.5 | 4239.1 | 6243.3 |
-| torque tick | 280 µs<br>3.6 kHz | **131 µs<br>7.6 kHz** | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | 515 µs<br>1.9 kHz | **242 µs<br>4.1 kHz** | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| `update_kinematics` | **38.6** | 155.2 | 489.5 | 1458.8 | 1495.0 |
+| `rnea` | **51.4** | 125.0 | 270.7 | 1650.3 | 2324.4 |
+| `crba` | **61.0** | 234.4 | 971.5 | 2293.0 | 3627.7 |
+| `aba` | **179.9** | 399.6 | 1299.5 | 4239.1 | 6243.3 |
+| torque tick | **90 µs<br>11.1 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
+| operational space | **151 µs<br>6.6 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
 
-Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`.
-
-> Only the STM32G474 column is current. The others predate the fixed-link fold
-> and the packed inertia representations, and are pessimistic on the dynamics by
-> 2–3x.
-
-A torque tick on the M33 and the RP2350's RISC-V core, across robots:
-
-| Robot | dof | Arm core | RISC-V core |
-|---|---|---|---|
-| `spine` | 9 | 41 µs — 24.4 kHz | 450 µs — 2.2 kHz |
-| `xarm7` | 7 | 98 µs — 10.2 kHz | 1085 µs — 922 Hz |
-| `go2` | 18 | 280 µs — 3.6 kHz | 3109 µs — 322 Hz |
+> Only the STM32G474 column is current. The others predate this round of
+> optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
+> that on CRBA and the Jacobians.
 
 **Run dynamics on a core with a hardware FPU.** Without one the library is
 10–20× slower, which is a part-selection decision rather than something to
 optimise around: for a quadruped, a Hazard3 or C3/C6/H2 class core is not a
-viable target. Two Cortex-M4F parts agree within 4% on cycles per call, so
-another M4F can be scaled from these by clock.
+viable target.
 
 Raw CSV is in [`benchmark/results/`](benchmark/results/), and
 `tools/report.py` regenerates these tables from it.

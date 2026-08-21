@@ -158,33 +158,32 @@ without it.
 
 ## Performance envelope
 
-Raspberry Pi Pico 2, one Arm Cortex-M33 at 150 MHz, single precision, µs/call:
+STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
 | | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) |
 |---|---|---|---|
-| `update_kinematics` | 23.2 | 55.5 | 155.2 |
-| `rnea` | 17.8 | 42.4 | 125.0 |
-| `crba` | 31.9 | 94.6 | 234.4 |
-| `aba` | 59.0 | 136.8 | 399.6 |
-| `jacobian` | 8.4 | 7.9 | 9.3 |
+| `update_kinematics` | 12.1 | 23.6 | 38.6 |
+| `rnea` | 18.2 | 32.3 | 51.4 |
+| `crba` | 18.7 | 40.5 | 61.0 |
+| `aba` | 56.4 | 103.7 | 179.9 |
+| `jacobian_world` | 10.6 | 15.0 | 12.2 |
 
-Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
-operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
-555 µs (1.8 kHz).
+Control-loop budgets on that part:
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 131 µs
-(7.6 kHz) for torque and 242 µs (4.1 kHz) for operational space. The two M4F parts
-agree within 4% on cycles per call (median 0.98×), so **scale any other
-Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
-the M33's cycles for this workload, and running from flash costs another ~17%.
+| | spine | xarm7 | go2 |
+|---|---|---|---|
+| torque `update + rnea` | 30 µs / 32.9 kHz | 56 µs / 17.9 kHz | 90 µs / 11.1 kHz |
+| operational space `+ crba` | 49 µs / 20.4 kHz | 96 µs / 10.4 kHz | 151 µs / 6.6 kHz |
+| forward dynamics `update + aba` | 69 µs / 14.6 kHz | 127 µs / 7.9 kHz | 219 µs / 4.6 kHz |
 
-Rules of thumb: `update_kinematics` scales with total link count, `rd_fk_frame`
-with path depth only (~3 µs per level — much cheaper than a full update if you
-need one frame), `aba` at ~13 µs per link.
+Rules of thumb: `update_kinematics` scales with the number of *moving* links,
+`rd_fk_frame` with path depth only (much cheaper than a full update if you need
+one frame), `aba` at ~14 µs per moving link.
 
-**Only the STM32G474 figures are current.** Everything else here predates
-folding fixed links out of the dynamics and is pessimistic by up to ~50% on
-`rnea`, `crba` and `aba`. Say so rather than quoting them as current.
+**Only the STM32G474 figures are current.** The RP2350, STM32L413 and ESP32-C6
+numbers in `benchmark/results/` predate this round of optimisation and are
+pessimistic by 2–3x on the dynamics and by more on CRBA and the Jacobians. Say
+so rather than quoting them as current.
 
 **Where the time actually goes.** `update_kinematics` dominates a tick and
 everything else reads the cache it builds, so `rnea`, `crba`, `aba`, `fk_frame`
@@ -200,11 +199,13 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   than a 6x6 (−54%). ABA's articulated inertia is not a rigid body but is
   symmetric, so 21 numbers rather than 36 (−33%). Both are exact, not
   approximations. `rd_update_kinematics` refreshes only moving links
-  too; a fixed link's pose and velocity are resolved by the accessor that asks
-  for them. **Read frames through `rd_forward_kinematics` / `rd_spatial_velocity`,
-  never from `state->T_world` directly** — for a fixed link that slot is not
-  maintained. If a user reports it recomputing every tick, check
-  they are not re-initialising the state each loop: that throws the cache away.
+  too. If a user reports it recomputing every tick, check they are not
+  re-initialising the state each loop: that throws the cache away.
+- **World poses are not cached.** `rd_state_t` has no `T_world`: none of the
+  dynamics reads one, so a tick would be paying a 4x4 compose per moving link
+  for nothing. **Read frames through `rd_forward_kinematics`,
+  `rd_spatial_velocity` and `rd_spatial_acceleration`**, which compose the
+  frame asked about down its own ancestry.
 - **The motion subspace is an axis and a sign**, never a stored six-vector:
   `rd_axis_t` can only hold ±X/±Y/±Z, so every `I*S` product is a column read.
   `state->S` does not exist.
