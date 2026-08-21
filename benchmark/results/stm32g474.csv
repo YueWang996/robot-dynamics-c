@@ -6,50 +6,51 @@
 # real_t=float32
 # compiler=15.2.1 20251203
 # repeats=5 target_us=50000 (minimum of 5 timed loops)
-# note=the other boards in this directory predate the fixed-link fold and the
-#   compact composite inertia, and are pessimistic on the dynamics by 2x or more.
+# note=the other boards in this directory predate the fixed-link fold, the
+#   compact composite inertia and the packed articulated inertia; they are
+#   pessimistic on the dynamics by 2-3x.
 arch,robot,algorithm,n_links,n_joints,nv,ns_per_call,cycles_per_call,iters
-stm32g4,simple_arm,update_kinematics,3,2,2,17994.1,3059,4096
-stm32g4,simple_arm,fk_frame,3,2,2,16264.6,2765,4096
+stm32g4,simple_arm,update_kinematics,3,2,2,18076.4,3073,4096
+stm32g4,simple_arm,fk_frame,3,2,2,16358.9,2781,4096
 stm32g4,simple_arm,jacobian_world,3,2,2,4829.4,821,16384
-stm32g4,simple_arm,jacobian_local,3,2,2,7864.6,1337,8192
-stm32g4,simple_arm,rnea,3,2,2,15923.6,2707,4096
+stm32g4,simple_arm,jacobian_local,3,2,2,7841.2,1333,8192
+stm32g4,simple_arm,rnea,3,2,2,15970.5,2715,4096
 stm32g4,simple_arm,aba,3,2,2,,,unsupported(-5)
-stm32g4,simple_arm,crba,3,2,2,11482.3,1952,8192
-stm32g4,simple_arm,gravity_comp,3,2,2,11664.7,1983,8192
+stm32g4,simple_arm,crba,3,2,2,11529.4,1960,8192
+stm32g4,simple_arm,gravity_comp,3,2,2,11711.8,1991,8192
 stm32g4,simple_arm,spatial_accel,3,2,2,7982.3,1357,8192
 stm32g4,simple_arm,spatial_velocity,3,2,2,2111.8,359,32768
-stm32g4,simple_arm,_heap_probe,3,2,2,10217.7,1737,8192
-stm32g4,spine,update_kinematics,4,3,9,28635.3,4868,2048
+stm32g4,simple_arm,_heap_probe,3,2,2,9870.6,1678,8192
+stm32g4,spine,update_kinematics,4,3,9,28582.5,4859,2048
 stm32g4,spine,fk_frame,4,3,9,19047.1,3238,4096
-stm32g4,spine,jacobian_world,4,3,9,17511.7,2977,4096
-stm32g4,spine,jacobian_local,4,3,9,23788.1,4044,4096
-stm32g4,spine,rnea,4,3,9,21670.7,3684,4096
-stm32g4,spine,aba,4,3,9,96511.7,16407,1024
-stm32g4,spine,crba,4,3,9,31600.1,5372,2048
-stm32g4,spine,gravity_comp,4,3,9,15964.6,2714,4096
+stm32g4,spine,jacobian_world,4,3,9,16917.7,2876,4096
+stm32g4,spine,jacobian_local,4,3,9,23835.2,4052,4096
+stm32g4,spine,rnea,4,3,9,21717.5,3692,4096
+stm32g4,spine,aba,4,3,9,63793.9,10845,1024
+stm32g4,spine,crba,4,3,9,31647.0,5380,2048
+stm32g4,spine,gravity_comp,4,3,9,16011.7,2722,4096
 stm32g4,spine,spatial_accel,4,3,9,9823.5,1670,8192
 stm32g4,spine,spatial_velocity,4,3,9,2111.8,359,32768
-stm32g4,spine,_heap_probe,4,3,9,12329.3,2096,4096
-stm32g4,xarm7,update_kinematics,10,7,7,59323.2,10085,1024
-stm32g4,xarm7,fk_frame,10,7,7,45941.4,7810,2048
+stm32g4,spine,_heap_probe,4,3,9,12252.9,2083,4096
+stm32g4,xarm7,update_kinematics,10,7,7,59888.7,10181,1024
+stm32g4,xarm7,fk_frame,10,7,7,46293.9,7870,2048
 stm32g4,xarm7,jacobian_world,10,7,7,14211.7,2416,4096
-stm32g4,xarm7,jacobian_local,10,7,7,20458.7,3478,4096
-stm32g4,xarm7,rnea,10,7,7,37688.0,6407,2048
-stm32g4,xarm7,aba,10,7,7,173558.6,29505,512
-stm32g4,xarm7,crba,10,7,7,52923.8,8997,1024
-stm32g4,xarm7,gravity_comp,10,7,7,26959.0,4583,2048
+stm32g4,xarm7,jacobian_local,10,7,7,20505.9,3486,4096
+stm32g4,xarm7,rnea,10,7,7,37735.4,6415,2048
+stm32g4,xarm7,aba,10,7,7,116777.3,19852,512
+stm32g4,xarm7,crba,10,7,7,52970.7,9005,1024
+stm32g4,xarm7,gravity_comp,10,7,7,27005.9,4591,2048
 stm32g4,xarm7,spatial_accel,10,7,7,17399.9,2958,4096
 stm32g4,xarm7,spatial_velocity,10,7,7,2823.5,480,32768
-stm32g4,xarm7,_heap_probe,10,7,7,24817.4,4219,2048
-stm32g4,go2,update_kinematics,31,12,18,107824.2,18330,512
+stm32g4,xarm7,_heap_probe,10,7,7,24111.8,4099,4096
+stm32g4,go2,update_kinematics,31,12,18,108140.6,18384,512
 stm32g4,go2,fk_frame,31,12,18,20929.4,3558,4096
-stm32g4,go2,jacobian_world,31,12,18,26453.1,4497,2048
-stm32g4,go2,jacobian_local,31,12,18,37876.5,6439,2048
-stm32g4,go2,rnea,31,12,18,60881.8,10350,1024
-stm32g4,go2,aba,31,12,18,302293.0,51390,256
-stm32g4,go2,crba,31,12,18,113658.2,19322,512
-stm32g4,go2,gravity_comp,31,12,18,43582.5,7409,2048
+stm32g4,go2,jacobian_world,31,12,18,25906.2,4404,2048
+stm32g4,go2,jacobian_local,31,12,18,37923.3,6447,2048
+stm32g4,go2,rnea,31,12,18,60928.7,10358,1024
+stm32g4,go2,aba,31,12,18,203242.2,34551,256
+stm32g4,go2,crba,31,12,18,113705.1,19330,512
+stm32g4,go2,gravity_comp,31,12,18,43629.4,7417,2048
 stm32g4,go2,spatial_accel,31,12,18,25541.0,4342,2048
 stm32g4,go2,spatial_velocity,31,12,18,2823.5,480,32768
-stm32g4,go2,_heap_probe,31,12,18,65970.7,11215,1024
+stm32g4,go2,_heap_probe,31,12,18,65617.2,11155,1024

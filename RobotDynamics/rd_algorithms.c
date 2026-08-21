@@ -31,10 +31,6 @@ static RD_INLINE void algo_motion_transform(rd_int_t jtype, const rd_real_t axis
 }
 
 /* out = A * [p]x, row-major 3x3. Each column is a cross product: 18 mults. */
-/* The spatial-inertia congruence moved to rd_math.h so that rd_chain_build
- * can fold fixed links with the same code that transforms them here. */
-#define algo_transform_inertia_accumulate rd_spatial_inertia_congruence
-
 static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
                                           const rd_state_t* state,
                                           rd_idx_t node, rd_idx_t parent,
@@ -557,7 +553,11 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
     const rd_int_t nv = rd_chain_get_nv(chain);
 
-    rd_real_t* IA = state->inertia;   /* articulated body inertia, 36*n */
+    /* Symmetric throughout, so 21 numbers per node rather than 36.
+     * state->inertia is sized for the larger of the uses; this takes the
+     * first RD_ABI_LEN floats of each node's slot. */
+    rd_real_t* IA = state->inertia;
+    #define RD_IA(n) (&IA[(n) * RD_ABI_LEN])
     rd_real_t* pA = state->force;     /* bias force,               6*n  */
     rd_real_t* c  = state->cvp;       /* velocity-product accel,   6*n  */
     rd_real_t* U  = state->U;
@@ -573,8 +573,8 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         rd_idx_t parent = chain->dyn_parent[node];
         const rd_real_t* v_i = &state->v[node*6];
 
-        memcpy(&IA[node*36], &chain->spatial_inertias[node*36],
-               36 * sizeof(rd_real_t));
+        rd_abi_from_rbi(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
+                        RD_IA(node));
 
         rd_real_t vj[6];
         algo_joint_velocity(chain, state, node, parent, vj);
@@ -598,11 +598,11 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
          * link's contribution has been pushed to its parent, so copying it
          * aside first would just be 36 floats of pointless traffic.
          */
-        rd_real_t* Ia = &IA[node*36];
+        rd_real_t* Ia = RD_IA(node);
         rd_real_t* pa = &pA[node*6];
 
         if (vi >= 0) {
-            rd_mat6_vec(Ia, S_i, &U[node*6]);
+            rd_abi_mul(Ia, S_i, &U[node*6]);
             rd_real_t d = RD_REAL(0.0);
             for (int k = 0; k < 6; ++k) d += S_i[k] * U[node*6 + k];
             if (d <= RD_EPS) return RD_ERR_SINGULAR;
@@ -612,15 +612,10 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
             /* Ia -= U D^-1 U^T */
             rd_real_t inv_d = RD_REAL(1.0) / d;
-            for (int r = 0; r < 6; ++r) {
-                rd_real_t ur = U[node*6 + r] * inv_d;
-                for (int cc = 0; cc < 6; ++cc) {
-                    Ia[r*6 + cc] -= ur * U[node*6 + cc];
-                }
-            }
+            rd_abi_rank1_sub(Ia, &U[node*6], inv_d);
             /* pa += Ia c + U D^-1 u */
             rd_real_t Iac[6];
-            rd_mat6_vec(Ia, &c[node*6], Iac);
+            rd_abi_mul(Ia, &c[node*6], Iac);
             rd_real_t ud = u[node] * inv_d;
             for (int k = 0; k < 6; ++k) pa[k] += Iac[k] + U[node*6 + k] * ud;
         } else {
@@ -628,14 +623,14 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             u[node] = RD_REAL(0.0);
             /* A rigid connection: c is zero, so pa is unchanged. */
             rd_real_t Iac[6];
-            rd_mat6_vec(Ia, &c[node*6], Iac);
+            rd_abi_mul(Ia, &c[node*6], Iac);
             for (int k = 0; k < 6; ++k) pa[k] += Iac[k];
         }
 
         if (parent != -1) {
             rd_real_t Tinv[16];
             rd_mat4_inv(&state->T_dyn[node*16], Tinv);
-            algo_transform_inertia_accumulate(Tinv, Ia, &IA[parent*36]);
+            rd_abi_congruence_accum(Tinv, Ia, RD_IA(parent));
             rd_real_t pf[6];
             rd_spatial_transform_force(&state->T_dyn[node*16], pa, pf);
             for (int k = 0; k < 6; ++k) pA[parent*6 + k] += pf[k];
@@ -683,7 +678,9 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             for (int k = 0; k < 6; ++k) {
                 rhs[k] = (tau ? tau[k] : RD_REAL(0.0)) - pA[node*6 + k];
             }
-            if (algo_solve6_spd(&IA[node*36], rhs, a_root) != 0) {
+            rd_real_t M6[36];
+            rd_abi_to_mat6(RD_IA(node), M6);
+            if (algo_solve6_spd(M6, rhs, a_root) != 0) {
                 return RD_ERR_SINGULAR;
             }
             for (int k = 0; k < 6; ++k) {
@@ -706,5 +703,6 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         }
     }
 
+    #undef RD_IA
     return RD_OK;
 }

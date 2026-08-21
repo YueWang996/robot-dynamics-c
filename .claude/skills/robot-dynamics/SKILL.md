@@ -194,9 +194,12 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   sensor mounts and inertial frames are all fixed nodes — Go2 is 18 of 30.
   `rd_chain_build` folds each one's inertia into its nearest moving ancestor and
   the dynamics traverse only the moving nodes, worth −53% on `rnea`, −47% on
-  `crba` and −51% on `aba`. CRBA gains again from carrying its composite
-  inertia as ten numbers rather than a 6x6, which is exact because a sum of
-  rigid-body inertias is a rigid body: another −54%. `rd_update_kinematics` refreshes only moving links
+  `crba` and −51% on `aba`.
+- **Inertias are stored packed.** CRBA's composite is a sum of rigid-body
+  inertias, which is itself a rigid body, so it lives in ten numbers rather
+  than a 6x6 (−54%). ABA's articulated inertia is not a rigid body but is
+  symmetric, so 21 numbers rather than 36 (−33%). Both are exact, not
+  approximations. `rd_update_kinematics` refreshes only moving links
   too; a fixed link's pose and velocity are resolved by the accessor that asks
   for them. **Read frames through `rd_forward_kinematics` / `rd_spatial_velocity`,
   never from `state->T_world` directly** — for a fixed link that slot is not

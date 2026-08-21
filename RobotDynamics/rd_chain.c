@@ -45,7 +45,6 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->frame_names = (char**)RD_MALLOC(sizeof(char*) * n);
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
     chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
-    chain->spatial_inertias = (rd_real_t*)RD_CALLOC(n * 36, sizeof(rd_real_t));
     chain->dyn_order = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_parent = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_child = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
@@ -62,7 +61,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         !chain->children_list || !chain->joint_idx || !chain->joint_type ||
         !chain->axes || !chain->T_joint_offset || !chain->T_link_offset ||
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
-        !chain->spatial_inertias || !chain->inertia_compact ||
+        !chain->inertia_compact ||
         !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
         !chain->dyn_child_start) {
         rd_chain_free(chain);
@@ -147,10 +146,15 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         }
     }
 
-    /* Precompute spatial inertias */
+    /* Per-link 6x6 spatial inertias. Only the fold below needs them, and only
+     * the folded ten-number form survives, so this is a scratch allocation
+     * rather than 36 floats a node kept for the life of the chain. */
+    rd_real_t* SI = (rd_real_t*)RD_CALLOC((size_t)n * 36, sizeof(rd_real_t));
+    if (!SI) { rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
+
     for (rd_int_t i = 0; i < n; ++i) {
         const rd_link_t* L = &model->links[i];
-        rd_real_t* Is = &chain->spatial_inertias[i*36];
+        rd_real_t* Is = &SI[i*36];
 
         rd_real_t m = (rd_real_t)L->inertia.mass;
         rd_real_t cx = (rd_real_t)L->inertia.com.x;
@@ -287,7 +291,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     }
     {
         rd_int_t* fill = (rd_int_t*)RD_CALLOC(n, sizeof(rd_int_t));
-        if (!fill) { rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
+        if (!fill) { RD_FREE(SI); rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
         for (rd_int_t ti = 0; ti < n; ++ti) {
             rd_idx_t node = chain->topo_order[ti];
             if (!rd_chain_node_is_dynamic(chain, node)) continue;
@@ -304,7 +308,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
      * composed with those of any fixed nodes in between. */
     {
         rd_real_t* Tf = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * (size_t)n * 16);
-        if (!Tf) { rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
+        if (!Tf) { RD_FREE(SI); rd_chain_free(chain); return RD_ERR_ALLOC_FAILED; }
 
         for (rd_int_t i = 0; i < n; ++i) {
             rd_real_t acc[16], tmp[16];
@@ -331,9 +335,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
             if (a < 0) continue;
             rd_real_t Ti[16];
             rd_mat4_inv(&Tf[i*16], Ti);
-            rd_spatial_inertia_congruence(Ti, &chain->spatial_inertias[i*36],
-                                          &chain->spatial_inertias[a*36]);
-            memset(&chain->spatial_inertias[i*36], 0, 36 * sizeof(rd_real_t));
+            rd_spatial_inertia_congruence(Ti, &SI[i*36], &SI[a*36]);
+            memset(&SI[i*36], 0, 36 * sizeof(rd_real_t));
         }
         RD_FREE(Tf);
     }
@@ -342,7 +345,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
      * is still a rigid-body spatial inertia, so the ten-number form survives
      * the fold -- it just describes the composite body now. */
     for (rd_int_t i = 0; i < n; ++i) {
-        const rd_real_t* Is = &chain->spatial_inertias[i*36];
+        const rd_real_t* Is = &SI[i*36];
         rd_real_t* icp = &chain->inertia_compact[i * RD_INERTIA_COMPACT_LEN];
         rd_real_t m = Is[0];
         icp[0] = m;
@@ -357,6 +360,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         icp[9] = Is[4*6 + 5];   /* Jyz */
     }
 
+    RD_FREE(SI);
     return RD_OK;
 }
 
@@ -382,7 +386,6 @@ void rd_chain_free(rd_chain_t* chain) {
     
     RD_FREE(chain->parent_path);
     RD_FREE(chain->parent_path_len);
-    RD_FREE(chain->spatial_inertias);
     RD_FREE(chain->inertia_compact);
     RD_FREE(chain->dyn_order);
     RD_FREE(chain->dyn_parent);

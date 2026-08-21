@@ -53,9 +53,6 @@ typedef struct {
     rd_idx_t* parent_path;         /**< Flattened paths (n_nodes * n_nodes) */
     rd_int_t* parent_path_len;     /**< Path length for each node */
 
-    /* Spatial inertias (6x6, row-major) */
-    rd_real_t* spatial_inertias;   /**< Size n_nodes * 36 */
-
     /* Same inertias in the ten-number packed form, for I*v products.
      * See rd_spatial_inertia_mul(). Size n_nodes * RD_INERTIA_COMPACT_LEN. */
     rd_real_t* inertia_compact;
@@ -68,11 +65,10 @@ typedef struct {
      * nodes whose joint can move, plus the root.
      *
      * Each fixed link's spatial inertia is folded into its nearest moving
-     * ancestor at build time, so `spatial_inertias` and `inertia_compact` hold
-     * *composite* bodies -- a moving node carries the mass of the fixed links
-     * hanging off it, and a fixed node's own entry is zero. Total mass and the
-     * dynamics are unchanged; the per-link split is not recoverable from here
-     * afterwards. Kinematics still walks every node, so every frame keeps its
+     * ancestor at build time, so `inertia_compact` holds *composite* bodies --
+     * a moving node carries the mass of the fixed links hanging off it, and a
+     * fixed node's own entry is zero. Total mass and the dynamics are
+     * unchanged; the per-link split is not recoverable from here afterwards. Kinematics still walks every node, so every frame keeps its
      * own pose, velocity and Jacobian. */
     rd_int_t   n_dyn;              /**< Number of dynamics nodes */
     rd_idx_t*  dyn_order;          /**< n_dyn, topological */

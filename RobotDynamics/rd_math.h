@@ -507,6 +507,137 @@ static RD_INLINE void rd_congruence3_accum(const rd_real_t R[9], const rd_real_t
  * gets the lower-left triangle for free from symmetry, and never materialises a
  * 6x6 temporary.
  */
+/* ---------------------------------------------------------------------------
+ * Articulated-body inertia, packed.
+ *
+ * ABA's articulated inertia stops being a rigid body after the rank-1 downdate,
+ * so unlike CRBA's composite it needs a general 6x6 -- but it stays symmetric
+ * throughout, so it needs 21 numbers and not 36. The blocks are stored the way
+ * every operation on them wants them:
+ *
+ *   [0..5]    A11, symmetric: 00 01 02 11 12 22
+ *   [6..14]   A12, full 3x3 row-major
+ *   [15..20]  A22, symmetric: 00 01 02 11 12 22
+ *
+ * A21 is A12 transposed and is never stored. On a memory-bound core that is
+ * 15 fewer floats read and written per node per pass.
+ * ------------------------------------------------------------------------ */
+#define RD_ABI_LEN 21
+
+/** Seed from a rigid-body inertia in the ten-number form. */
+static RD_INLINE void rd_abi_from_rbi(const rd_real_t* RD_RESTRICT ic,
+                                      rd_real_t* RD_RESTRICT out) {
+    const rd_real_t m = ic[0], hx = ic[1], hy = ic[2], hz = ic[3];
+    out[0] = m;  out[1] = RD_REAL(0.0); out[2] = RD_REAL(0.0);
+    out[3] = m;  out[4] = RD_REAL(0.0); out[5] = m;
+    /* A12 = -[h]x */
+    out[6]  = RD_REAL(0.0); out[7]  =  hz;           out[8]  = -hy;
+    out[9]  = -hz;          out[10] = RD_REAL(0.0);  out[11] =  hx;
+    out[12] =  hy;          out[13] = -hx;           out[14] = RD_REAL(0.0);
+    out[15] = ic[4]; out[16] = ic[7]; out[17] = ic[8];
+    out[18] = ic[5]; out[19] = ic[9]; out[20] = ic[6];
+}
+
+/** out = I * v, spatial vectors ordered [linear, angular]. */
+static RD_INLINE void rd_abi_mul(const rd_real_t* RD_RESTRICT I,
+                                 const rd_real_t* RD_RESTRICT v,
+                                 rd_real_t* RD_RESTRICT out) {
+    const rd_real_t a = v[0], b = v[1], c = v[2];
+    const rd_real_t d = v[3], e = v[4], f = v[5];
+    out[0] = I[0]*a + I[1]*b + I[2]*c + I[6]*d  + I[7]*e  + I[8]*f;
+    out[1] = I[1]*a + I[3]*b + I[4]*c + I[9]*d  + I[10]*e + I[11]*f;
+    out[2] = I[2]*a + I[4]*b + I[5]*c + I[12]*d + I[13]*e + I[14]*f;
+    out[3] = I[6]*a + I[9]*b + I[12]*c + I[15]*d + I[16]*e + I[17]*f;
+    out[4] = I[7]*a + I[10]*b + I[13]*c + I[16]*d + I[18]*e + I[19]*f;
+    out[5] = I[8]*a + I[11]*b + I[14]*c + I[17]*d + I[19]*e + I[20]*f;
+}
+
+/** I -= (U U^T) * inv_d, the articulated-body rank-1 downdate. */
+static RD_INLINE void rd_abi_rank1_sub(rd_real_t* RD_RESTRICT I,
+                                       const rd_real_t* RD_RESTRICT U,
+                                       rd_real_t inv_d) {
+    const rd_real_t u0 = U[0]*inv_d, u1 = U[1]*inv_d, u2 = U[2]*inv_d;
+    const rd_real_t u3 = U[3]*inv_d, u4 = U[4]*inv_d, u5 = U[5]*inv_d;
+    I[0] -= u0*U[0]; I[1] -= u0*U[1]; I[2] -= u0*U[2];
+    I[3] -= u1*U[1]; I[4] -= u1*U[2]; I[5] -= u2*U[2];
+    I[6]  -= u0*U[3]; I[7]  -= u0*U[4]; I[8]  -= u0*U[5];
+    I[9]  -= u1*U[3]; I[10] -= u1*U[4]; I[11] -= u1*U[5];
+    I[12] -= u2*U[3]; I[13] -= u2*U[4]; I[14] -= u2*U[5];
+    I[15] -= u3*U[3]; I[16] -= u3*U[4]; I[17] -= u3*U[5];
+    I[18] -= u4*U[4]; I[19] -= u4*U[5]; I[20] -= u5*U[5];
+}
+
+/** Expand to a full row-major 6x6, for the floating base's 6x6 solve. */
+static RD_INLINE void rd_abi_to_mat6(const rd_real_t* RD_RESTRICT I,
+                                     rd_real_t* RD_RESTRICT M) {
+    const int u[9] = {0,1,2, 1,3,4, 2,4,5};
+    const int w[9] = {15,16,17, 16,18,19, 17,19,20};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            M[i*6 + j]           = I[u[i*3+j]];
+            M[i*6 + 3 + j]       = I[6 + i*3 + j];
+            M[(i+3)*6 + j]       = I[6 + j*3 + i];
+            M[(i+3)*6 + 3 + j]   = I[w[i*3+j]];
+        }
+    }
+}
+
+/** dst += the six unique entries of R^T C R, for symmetric C. */
+static RD_INLINE void rd_congruence3_sym_accum(const rd_real_t R[9],
+                                               const rd_real_t C[9],
+                                               rd_real_t* RD_RESTRICT dst) {
+    rd_real_t CR[9];
+    rd_mat3_mul(C, R, CR);
+    static const int oi[6] = {0,0,0,1,1,2};
+    static const int oj[6] = {0,1,2,1,2,2};
+    for (int k = 0; k < 6; ++k) {
+        const int i = oi[k], j = oj[k];
+        dst[k] += R[0*3+i]*CR[0*3+j] + R[1*3+i]*CR[1*3+j] + R[2*3+i]*CR[2*3+j];
+    }
+}
+
+/** accum += Ad(T)^T I Ad(T), all in packed form. Same block algebra as the
+ *  6x6 version; A21 comes from A12 transposed and BL is never written. */
+static RD_INLINE void rd_abi_congruence_accum(const rd_real_t* RD_RESTRICT T,
+                                              const rd_real_t* RD_RESTRICT I_in,
+                                              rd_real_t* RD_RESTRICT accum) {
+    const rd_real_t R[9] = { T[0], T[4], T[8],
+                             T[1], T[5], T[9],
+                             T[2], T[6], T[10] };
+    const rd_real_t p[3] = { T[12], T[13], T[14] };
+
+    rd_real_t A11[9], C[9], S12[9];
+    A11[0]=I_in[0]; A11[1]=I_in[1]; A11[2]=I_in[2];
+    A11[3]=I_in[1]; A11[4]=I_in[3]; A11[5]=I_in[4];
+    A11[6]=I_in[2]; A11[7]=I_in[4]; A11[8]=I_in[5];
+
+    rd_congruence3_sym_accum(R, A11, accum);
+
+    /* C = A11 P + A12,  TR += R^T C R */
+    rd_mat3_mul_skew(A11, p, C);
+    for (int i = 0; i < 9; ++i) C[i] += I_in[6 + i];
+    rd_congruence3(R, C, S12);
+    for (int i = 0; i < 9; ++i) accum[6 + i] += S12[i];
+
+    /* C = A22 + A21 P + (A21 P)^T - P A11 P,  BR += R^T C R */
+    {
+        rd_real_t t[9], A21P[9];
+        rd_skew_mul_mat3(p, A11, t);
+        rd_mat3_mul_skew(t, p, C);                 /* P A11 P */
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) t[i*3+j] = I_in[6 + j*3 + i];  /* A21 */
+        }
+        rd_mat3_mul_skew(t, p, A21P);
+        static const int w[9] = {15,16,17, 16,18,19, 17,19,20};
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                C[i*3+j] = I_in[w[i*3+j]] + A21P[i*3+j] + A21P[j*3+i] - C[i*3+j];
+            }
+        }
+    }
+    rd_congruence3_sym_accum(R, C, accum + 15);
+}
+
 static RD_INLINE void rd_spatial_inertia_congruence(const rd_real_t* RD_RESTRICT T,
                                               const rd_real_t* RD_RESTRICT I_in,
                                               rd_real_t* RD_RESTRICT I_accum) {
