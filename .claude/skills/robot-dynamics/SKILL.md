@@ -189,10 +189,16 @@ Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
 one frame), `aba` at ~14 µs per moving link.
 
-**Only the STM32G474 figures are current.** The RP2350, STM32L413 and ESP32-C6
-numbers in `benchmark/results/` predate this round of optimisation and are
-pessimistic by 2–3x on the dynamics and by more on CRBA and the Jacobians. Say
-so rather than quoting them as current.
+**The two RP2350 columns in `benchmark/results/` are the only stale ones.**
+They predate this round of optimisation and are pessimistic by 2–3x on the
+dynamics and more on CRBA and the Jacobians; say so rather than quoting them.
+The STM32G474, STM32L413 and ESP32-C6 files were captured together and are
+current.
+
+Go2 torque tick across the current three: **79 µs (G474 @ 170 MHz)**, 163 µs
+(L413 @ 80 MHz), 1294 µs (ESP32-C6, no FPU). The two M4F parts agree to within
+**2.5% on cycles per call** (median 0.975), so scale another M4F from these by
+clock.
 
 **Instruction fetch, not the core.** On an STM32G474 at 170 MHz the flash needs
 four wait states and the ART instruction cache is 1 KB. Measured by running the

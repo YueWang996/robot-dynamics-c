@@ -123,19 +123,31 @@ faster for that robot.
 
 Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 
-| | M4F @ 170<br><sub>G474</sub> | M33 @ 150<br><sub>RP2350</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
+| | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | **27.4** | 155.2 | 489.5 | 1458.8 | 1495.0 |
-| `rnea` | **51.4** | 125.0 | 270.7 | 1650.3 | 2324.4 |
-| `crba` | **60.9** | 234.4 | 971.5 | 2293.0 | 3627.7 |
-| `aba` | **180.0** | 399.6 | 1299.5 | 4239.1 | 6243.3 |
-| torque tick | **79 µs<br>12.7 kHz** | 280 µs<br>3.6 kHz | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | **140 µs<br>7.2 kHz** | 515 µs<br>1.9 kHz | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| `update_kinematics` | **27.4** | **56.9** | 155.2 | 1458.8 | **354.5** |
+| `rnea` | **51.5** | **105.8** | 125.0 | 1650.3 | **939.4** |
+| `crba` | **60.9** | **126.1** | 234.4 | 2293.0 | **848.9** |
+| `aba` | **181.0** | **378.5** | 399.6 | 4239.1 | **2726.6** |
+| torque tick | **79 µs<br>12.7 kHz** | **163 µs<br>6.1 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | **1294 µs<br>773 Hz** |
+| operational space | **140 µs<br>7.2 kHz** | **289 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | **2143 µs<br>467 Hz** |
 
-> Only the STM32G474 column is current. The others predate this round of
-> optimisation and are pessimistic — by 2–3x on the dynamics, and by more than
-> that on CRBA and the Jacobians.
+> The two RP2350 columns are the only stale ones left; they predate this round
+> of optimisation and are pessimistic by 2–3x on the dynamics and more on CRBA
+> and the Jacobians. The other three were re-measured together.
+
+The two Cortex-M4F parts agree to **within 2.5% on cycles per call** across
+every algorithm (median 0.975), so **another M4F can be scaled from these by
+clock** and be close. What this round bought those two boards, on Go2:
+
+| | STM32L413 @ 80 MHz | ESP32-C6 @ 160 MHz |
+|---|---|---|
+| `update_kinematics` | 489.5 → 56.9 µs — 8.6x | 1495.0 → 354.5 µs — 4.2x |
+| `crba` | 971.5 → 126.1 µs — 7.7x | 3627.7 → 848.9 µs — 4.3x |
+| `aba` | 1299.5 → 378.5 µs — 3.4x | 6243.3 → 2726.6 µs — 2.3x |
+| torque tick | 567 → 163 µs — 3.5x | 3819 → 1294 µs — 3.0x |
+| operational space | 1732 → 289 µs — 6.0x | 7447 → 2143 µs — 3.5x |
 
 ### Two forward dynamics, and which to pick
 
@@ -155,6 +167,10 @@ Measured on the STM32G474, `update_kinematics` + the method:
 | `xarm7` | 7, fixed base | 122.0 µs | **102.4 µs** | CRBA −16% |
 | `spine` | 9, floating base | 67.8 µs | **65.8 µs** | CRBA −3% |
 | `go2` | 18, floating base | **208.3 µs** | 225.0 µs | ABA −8% |
+
+The same ordering holds on the STM32L413 (−17% / −3% / +8%) and on the
+FPU-less ESP32-C6 (−13% / −13% / +3%), so the crossover is a property of the
+robot rather than of the core.
 
 The crossover is around ten to twelve velocity DOF, and a floating base pushes
 it down: its six DOF are ancestors of every joint, so the mass matrix has no

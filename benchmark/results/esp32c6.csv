@@ -1,57 +1,58 @@
-# board=ESP32-C6FH4 (QFN32, rev v0.1) @ 160 MHz
+# board=ESP32-C6FH4 @ 160 MHz
+# probe=none -- results over the C6 USB Serial/JTAG peripheral
 # arch=RISC-V (ESP32-C6 HP core, RV32IMAC_Zicsr_Zifencei, no FPU)
 # clk_sys_hz=160000000
 # real_t=float32
-# compiler=13.2.0 (riscv32-esp-elf, Arduino ESP32 core 3.1.1 = ESP-IDF v5.3)
+# compiler=13.2.0
 # repeats=5 target_us=50000 (minimum of 5 timed loops)
-# flash=external QSPI through a 32 KB instruction cache
-# toolchain=arduino-cli from the Arduino IDE bundle; -O3, overriding the core's -Os
-# note=measured on current library code, which includes the traversal caching.
-#   The RP2350 and STM32G474 results here predate it, so update_kinematics is
-#   NOT comparable against them; every other row is, since the caching only
-#   touched that one routine.
+# build=Arduino ESP32 core 3.1.1, -O3 appended after the core's -Os
+# note=no FPU: every rd_real_t operation is a soft-float library call.
 arch,robot,algorithm,n_links,n_joints,nv,ns_per_call,cycles_per_call,iters
-esp32c6,simple_arm,update_kinematics,3,2,2,143673.8,22988,512
-esp32c6,simple_arm,fk_frame,3,2,2,137101.6,21936,512
-esp32c6,simple_arm,jacobian_world,3,2,2,20583.0,3293,4096
-esp32c6,simple_arm,jacobian_local,3,2,2,44925.3,7188,2048
-esp32c6,simple_arm,rnea,3,2,2,164839.8,26374,512
+esp32c6,simple_arm,update_kinematics,3,2,2,48814.5,7810,2048
+esp32c6,simple_arm,fk_frame,3,2,2,70086.9,11214,1024
+esp32c6,simple_arm,jacobian_world,3,2,2,37838.4,6054,2048
+esp32c6,simple_arm,jacobian_local,3,2,2,65533.2,10485,1024
+esp32c6,simple_arm,rnea,3,2,2,130437.5,20870,512
 esp32c6,simple_arm,aba,3,2,2,,,unsupported(-5)
-esp32c6,simple_arm,crba,3,2,2,238925.8,38228,256
-esp32c6,simple_arm,gravity_comp,3,2,2,92346.7,14775,1024
-esp32c6,simple_arm,spatial_accel,3,2,2,64832.0,10373,1024
-esp32c6,simple_arm,spatial_velocity,3,2,2,11582.3,1853,8192
-esp32c6,simple_arm,_heap_probe,3,2,2,35771.0,5723,2048
-esp32c6,spine,update_kinematics,4,3,9,288394.5,46143,256
-esp32c6,spine,fk_frame,4,3,9,225328.1,36053,256
-esp32c6,spine,jacobian_world,4,3,9,94158.2,15065,1024
-esp32c6,spine,jacobian_local,4,3,9,224878.9,35981,256
-esp32c6,spine,rnea,4,3,9,308875.0,49420,256
-esp32c6,spine,aba,4,3,9,926781.2,148285,64
-esp32c6,spine,crba,4,3,9,478882.8,76621,128
-esp32c6,spine,gravity_comp,4,3,9,151982.4,24317,512
-esp32c6,spine,spatial_accel,4,3,9,107550.8,17208,512
-esp32c6,spine,spatial_velocity,4,3,9,15063.7,2410,4096
-esp32c6,spine,_heap_probe,4,3,9,35808.6,5729,2048
-esp32c6,xarm7,update_kinematics,10,7,7,607835.9,97254,128
-esp32c6,xarm7,fk_frame,10,7,7,502578.1,80412,128
-esp32c6,xarm7,jacobian_world,10,7,7,76902.3,12304,1024
-esp32c6,xarm7,jacobian_local,10,7,7,182720.7,29235,512
-esp32c6,xarm7,rnea,10,7,7,755890.6,120943,128
-esp32c6,xarm7,aba,10,7,7,2273343.8,363735,32
-esp32c6,xarm7,crba,10,7,7,1717531.2,274805,32
-esp32c6,xarm7,gravity_comp,10,7,7,397156.2,63545,128
-esp32c6,xarm7,spatial_accel,10,7,7,245425.8,39268,256
-esp32c6,xarm7,spatial_velocity,10,7,7,15410.2,2466,4096
-esp32c6,xarm7,_heap_probe,10,7,7,37541.0,6007,2048
-esp32c6,go2,update_kinematics,31,12,18,1495046.9,239208,64
-esp32c6,go2,fk_frame,31,12,18,253972.7,40636,256
-esp32c6,go2,jacobian_world,31,12,18,94084.0,15053,1024
-esp32c6,go2,jacobian_local,31,12,18,298949.2,47832,256
-esp32c6,go2,rnea,31,12,18,2324375.0,371900,32
-esp32c6,go2,aba,31,12,18,6243281.2,998925,32
-esp32c6,go2,crba,31,12,18,3627718.8,580435,32
-esp32c6,go2,gravity_comp,31,12,18,1166015.6,186563,64
-esp32c6,go2,spatial_accel,31,12,18,751757.8,120281,128
-esp32c6,go2,spatial_velocity,31,12,18,15258.8,2441,4096
-esp32c6,go2,_heap_probe,31,12,18,39548.3,6328,2048
+esp32c6,simple_arm,fd_crba,3,2,2,,,unsupported(-5)
+esp32c6,simple_arm,crba,3,2,2,94880.9,15181,1024
+esp32c6,simple_arm,gravity_comp,3,2,2,79086.9,12654,1024
+esp32c6,simple_arm,spatial_accel,3,2,2,60967.8,9755,1024
+esp32c6,simple_arm,spatial_velocity,3,2,2,31416.0,5027,2048
+esp32c6,simple_arm,_heap_probe,3,2,2,35449.2,5672,2048
+esp32c6,spine,update_kinematics,4,3,9,113084.0,18093,512
+esp32c6,spine,fk_frame,4,3,9,126900.4,20304,512
+esp32c6,spine,jacobian_world,4,3,9,81293.0,13007,1024
+esp32c6,spine,jacobian_local,4,3,9,213554.7,34169,256
+esp32c6,spine,rnea,4,3,9,257164.1,41146,256
+esp32c6,spine,aba,4,3,9,764109.4,122258,128
+esp32c6,spine,fd_crba,4,3,9,651390.6,104223,128
+esp32c6,spine,crba,4,3,9,212375.0,33980,256
+esp32c6,spine,gravity_comp,4,3,9,133068.4,21291,512
+esp32c6,spine,spatial_accel,4,3,9,107587.9,17214,512
+esp32c6,spine,spatial_velocity,4,3,9,52699.2,8432,1024
+esp32c6,spine,_heap_probe,4,3,9,35830.6,5733,2048
+esp32c6,xarm7,update_kinematics,10,7,7,203847.7,32616,256
+esp32c6,xarm7,fk_frame,10,7,7,264324.2,42292,256
+esp32c6,xarm7,jacobian_world,10,7,7,160986.3,25758,512
+esp32c6,xarm7,jacobian_local,10,7,7,283593.8,45375,256
+esp32c6,xarm7,rnea,10,7,7,537414.1,85986,128
+esp32c6,xarm7,aba,10,7,7,1595156.2,255225,32
+esp32c6,xarm7,fd_crba,10,7,7,1361281.2,217805,64
+esp32c6,xarm7,crba,10,7,7,706820.3,113091,128
+esp32c6,xarm7,gravity_comp,10,7,7,291074.2,46572,256
+esp32c6,xarm7,spatial_accel,10,7,7,239613.3,38338,256
+esp32c6,xarm7,spatial_velocity,10,7,7,121462.9,19434,512
+esp32c6,xarm7,_heap_probe,10,7,7,37449.7,5992,2048
+esp32c6,go2,update_kinematics,31,12,18,354515.6,56722,256
+esp32c6,go2,fk_frame,31,12,18,142255.9,22761,512
+esp32c6,go2,jacobian_world,31,12,18,81150.4,12984,1024
+esp32c6,go2,jacobian_local,31,12,18,224304.7,35889,256
+esp32c6,go2,rnea,31,12,18,939359.4,150298,64
+esp32c6,go2,aba,31,12,18,2726625.0,436260,32
+esp32c6,go2,fd_crba,31,12,18,2821906.2,451505,32
+esp32c6,go2,crba,31,12,18,848937.5,135830,64
+esp32c6,go2,gravity_comp,31,12,18,474046.9,75848,128
+esp32c6,go2,spatial_accel,31,12,18,279050.8,44648,256
+esp32c6,go2,spatial_velocity,31,12,18,72483.4,11597,1024
+esp32c6,go2,_heap_probe,31,12,18,39561.0,6330,2048

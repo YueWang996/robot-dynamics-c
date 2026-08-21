@@ -6,9 +6,8 @@
 # real_t=float32
 # compiler=15.2.1 20251203
 # repeats=5 target_us=50000 (minimum of 5 timed loops)
-# note=the other boards in this directory predate this round of
-#   optimisation and are pessimistic -- by 2-3x on the dynamics, and by
-#   more than that on CRBA and the Jacobians.
+# note=the two RP2350 files in this directory are the stale ones; this file,
+#   stm32l413.csv and esp32c6.csv were captured together.
 arch,robot,algorithm,n_links,n_joints,nv,ns_per_call,cycles_per_call,iters
 stm32g4,simple_arm,update_kinematics,3,2,2,6705.9,1140,8192
 stm32g4,simple_arm,fk_frame,3,2,2,7200.1,1224,8192
