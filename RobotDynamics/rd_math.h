@@ -168,9 +168,15 @@ static RD_INLINE void rd_skew3(const rd_real_t v[3], rd_real_t S[9]) {
  * 3. 4x4 Homogeneous Operations (Kinematics)
  * ============================================================================ */
 
+/* Written out rather than memset plus four ones: sixteen floats is over
+ * whatever threshold the compiler inlines a fixed-size clear at, so it emitted
+ * a call -- and newlib-nano's memset is a byte-at-a-time loop. See rd_zero(). */
 static RD_INLINE void rd_mat4_identity(rd_real_t T[16]) {
-    memset(T, 0, 16 * sizeof(rd_real_t));
-    T[0] = T[5] = T[10] = T[15] = RD_REAL(1.0);
+    const rd_real_t Z = RD_REAL(0.0), O = RD_REAL(1.0);
+    T[0]  = O; T[1]  = Z; T[2]  = Z; T[3]  = Z;
+    T[4]  = Z; T[5]  = O; T[6]  = Z; T[7]  = Z;
+    T[8]  = Z; T[9]  = Z; T[10] = O; T[11] = Z;
+    T[12] = Z; T[13] = Z; T[14] = Z; T[15] = O;
 }
 
 /* C = A * B */
