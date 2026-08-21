@@ -827,6 +827,33 @@ static RD_INLINE void rd_spatial_transform_motion(const rd_real_t* RD_RESTRICT T
     v_out[2] = v_rot_z + (px*w_rot_y - py*w_rot_x);
 }
 
+/*
+ * out = Ad(T) applied to a unit spatial axis.
+ *
+ * A geometric Jacobian's columns are exactly this: the joint's own motion
+ * subspace, mapped into the reference frame. S is a unit spatial axis, so the
+ * rotated half is one column of T read straight out and the general 24
+ * multiplies collapse to nine -- or three, for a prismatic joint, whose column
+ * has no angular part to cross the translation with.
+ */
+static RD_INLINE void rd_spatial_transform_motion_axis(const rd_real_t* RD_RESTRICT T,
+                                                       rd_int_t s_axis, rd_real_t sgn,
+                                                       rd_real_t* RD_RESTRICT v_out) {
+    const rd_int_t j = (s_axis >= 3) ? (s_axis - 3) : s_axis;
+    const rd_real_t cx = sgn*T[4*j + 0], cy = sgn*T[4*j + 1], cz = sgn*T[4*j + 2];
+
+    if (s_axis >= 3) {
+        const rd_real_t px = T[12], py = T[13], pz = T[14];
+        v_out[0] = py*cz - pz*cy;
+        v_out[1] = pz*cx - px*cz;
+        v_out[2] = px*cy - py*cx;
+        v_out[3] = cx; v_out[4] = cy; v_out[5] = cz;
+    } else {
+        v_out[0] = cx; v_out[1] = cy; v_out[2] = cz;
+        v_out[3] = v_out[4] = v_out[5] = RD_REAL(0.0);
+    }
+}
+
 /**
  * @brief Sparse Force Transform: f_A = Ad(T_BA)^T * f_B
  */

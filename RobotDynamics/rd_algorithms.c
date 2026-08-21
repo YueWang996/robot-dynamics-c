@@ -24,20 +24,75 @@ static RD_INLINE void algo_gravity_world(const rd_real_t* gravity, rd_real_t out
 
 /* Velocity index of a node's joint, or -1 if it has none. */
 /*
- * rd_update_kinematics() refreshes only the nodes that can move. A fixed
- * link's pose and velocity in its nearest moving ancestor are constants, so
- * resolving one here is a single transform -- cheaper than walking every fixed
- * link on every tick when most of them are never queried.
+ * A frame's pose in the world, composed down its ancestry.
+ *
+ * rd_update_kinematics() does not keep world poses: they cost a 4x4 compose
+ * per moving link per tick, and the algorithms that dominate a control loop --
+ * RNEA, CRBA, ABA -- never read one. They work entirely in T_dyn, each link's
+ * pose in its nearest moving ancestor. So the world pose is composed here, for
+ * the frames actually asked about, at one compose per moving link on the path
+ * rather than per moving link in the robot. A fixed link's own T_dyn closes
+ * the chain: it is already expressed in its nearest moving ancestor, which is
+ * where the walk stops.
+ *
+ * Deliberately not inlined -- four call sites, none of them in a loop.
  */
-static RD_INLINE void algo_frame_world(const rd_chain_t* chain,
-                                       const rd_state_t* state,
-                                       rd_idx_t frame, rd_real_t T_out[16]) {
-    if (rd_chain_node_is_dynamic(chain, frame)) {
-        memcpy(T_out, &state->T_world[frame*16], 16*sizeof(rd_real_t));
-    } else {
-        rd_mat4_mul_se3(&state->T_world[chain->dyn_parent[frame]*16],
-                        &state->T_dyn[frame*16], T_out);
+static void algo_frame_world(const rd_chain_t* chain,
+                             const rd_state_t* state,
+                             rd_idx_t frame, rd_real_t T_out[16]) {
+    const rd_idx_t* path = &chain->parent_path[frame * chain->n_nodes];
+    const rd_int_t  plen = chain->parent_path_len[frame];
+    rd_real_t scratch[16];
+    rd_real_t* acc = T_out;
+    rd_real_t* alt = scratch;
+    int have = 0;
+
+    for (rd_int_t pi = 0; pi < plen; ++pi) {
+        rd_idx_t node = path[pi];
+        if (!rd_chain_node_is_dynamic(chain, node)) continue;
+        if (!have) {
+            memcpy(acc, &state->T_dyn[node*16], 16*sizeof(rd_real_t));
+            have = 1;
+        } else {
+            rd_mat4_mul_se3(acc, &state->T_dyn[node*16], alt);
+            rd_real_t* t = acc; acc = alt; alt = t;
+        }
     }
+    if (!rd_chain_node_is_dynamic(chain, frame)) {
+        rd_mat4_mul_se3(acc, &state->T_dyn[frame*16], alt);
+        rd_real_t* t = acc; acc = alt; alt = t;
+    }
+    if (acc != T_out) memcpy(T_out, acc, 16*sizeof(rd_real_t));
+}
+
+/*
+ * A spatial motion vector, carried from a frame's own coordinates out to the
+ * world.
+ *
+ * Ad(A B) v = Ad(A) (Ad(B) v), so the same ancestry the pose walk composes can
+ * be applied one link at a time to the vector instead. That trades a 4x4
+ * compose per step -- 36 multiplies and a sixteen-float temporary -- for a
+ * transform of the six-vector itself, and needs no path array: dyn_parent
+ * walks straight up.
+ */
+static void algo_frame_world_motion(const rd_chain_t* chain,
+                                    const rd_state_t* state,
+                                    rd_idx_t frame,
+                                    const rd_real_t v_local[6],
+                                    rd_real_t v_out[6]) {
+    rd_real_t buf[6];
+    rd_real_t* cur = buf;
+    rd_real_t* nxt = v_out;
+    memcpy(cur, v_local, 6*sizeof(rd_real_t));
+
+    for (rd_idx_t node = frame; ; ) {
+        rd_spatial_transform_motion(&state->T_dyn[node*16], cur, nxt);
+        rd_real_t* t = cur; cur = nxt; nxt = t;
+        rd_idx_t up = chain->dyn_parent[node];
+        if (up == -1) break;
+        node = up;
+    }
+    if (cur != v_out) memcpy(v_out, cur, 6*sizeof(rd_real_t));
 }
 
 static RD_INLINE void algo_frame_velocity(const rd_chain_t* chain,
@@ -156,14 +211,13 @@ rd_status_t rd_jacobian(const rd_chain_t* chain,
     const rd_int_t nv = rd_chain_get_nv(chain);
     memset(J_out, 0, 6 * (size_t)nv * sizeof(rd_real_t));
 
-    /* Base columns: a unit twist in the root body frame, mapped to the world. */
+    /* Base columns: a unit twist in the root body frame, mapped to the world.
+     * The root's pose in its nearest moving ancestor is its pose in the world. */
     if (chain->has_floating_base) {
-        const rd_real_t* T_base = &state->T_world[0];
-        rd_real_t unit[6], col[6];
-        for (int k = 0; k < 6; ++k) {
-            memset(unit, 0, 6*sizeof(rd_real_t));
-            unit[k] = RD_REAL(1.0);
-            rd_spatial_transform_motion(T_base, unit, col);
+        const rd_real_t* T_base = &state->T_dyn[chain->topo_order[0]*16];
+        rd_real_t col[6];
+        for (rd_int_t k = 0; k < 6; ++k) {
+            rd_spatial_transform_motion_axis(T_base, k, RD_REAL(1.0), col);
             for (int r = 0; r < 6; ++r) J_out[r*nv + k] = col[r];
         }
     }
@@ -171,34 +225,68 @@ rd_status_t rd_jacobian(const rd_chain_t* chain,
     rd_int_t plen = chain->parent_path_len[frame_id];
     const rd_idx_t* path = &chain->parent_path[frame_id * chain->n_nodes];
 
+    /*
+     * One walk down the path does everything: the running product of T_dyn is
+     * the world pose of each link as it is reached, which is what that link's
+     * column needs, and what is left in it at the end is the frame's own pose
+     * for the local-frame rotation below.
+     */
+    rd_real_t Tacc[16], Talt[16];
+    rd_real_t* acc = Tacc;
+    rd_real_t* alt = Talt;
+    int have = 0;
+
     for (rd_int_t pi = 0; pi < plen; ++pi) {
         rd_idx_t node = path[pi];
+        if (!rd_chain_node_is_dynamic(chain, node)) continue;
+
+        if (!have) {
+            memcpy(acc, &state->T_dyn[node*16], 16*sizeof(rd_real_t));
+            have = 1;
+        } else {
+            rd_mat4_mul_se3(acc, &state->T_dyn[node*16], alt);
+            rd_real_t* t = acc; acc = alt; alt = t;
+        }
+
         rd_int_t col_idx = algo_vel_index(chain, node);
         if (col_idx < 0) continue;
 
-        const rd_real_t* axis = &chain->axes[chain->joint_idx[node]*3];
-        rd_real_t twist[6] = {0};
-        if (chain->joint_type[node] == RD_JOINT_REVOLUTE) {
-            twist[3] = axis[0]; twist[4] = axis[1]; twist[5] = axis[2];
-        } else {
-            twist[0] = axis[0]; twist[1] = axis[1]; twist[2] = axis[2];
-        }
-
         rd_real_t col[6];
-        rd_spatial_transform_motion(&state->T_world[node*16], twist, col);
+        rd_spatial_transform_motion_axis(acc, chain->s_axis[node],
+                                         chain->s_sign[node], col);
         for (int r = 0; r < 6; ++r) J_out[r*nv + col_idx] = col[r];
     }
 
     if (ref_frame == RD_FRAME_LOCAL) {
-        rd_real_t Tw[16], T_f_w[16];
-        algo_frame_world(chain, state, frame_id, Tw);
-        rd_mat4_inv(Tw, T_f_w);
-        rd_real_t in[6], out[6];
-        for (rd_int_t c = 0; c < nv; ++c) {
-            for (int r = 0; r < 6; ++r) in[r] = J_out[r*nv + c];
-            rd_spatial_transform_motion(T_f_w, in, out);
-            for (int r = 0; r < 6; ++r) J_out[r*nv + c] = out[r];
+        if (!rd_chain_node_is_dynamic(chain, frame_id)) {
+            rd_mat4_mul_se3(acc, &state->T_dyn[frame_id*16], alt);
+            rd_real_t* t = acc; acc = alt; alt = t;
         }
+        rd_real_t T_f_w[16];
+        rd_mat4_inv(acc, T_f_w);
+
+        /*
+         * Only the columns the passes above wrote can be nonzero -- the base
+         * block, and the joints on this frame's own path. Every other column
+         * belongs to a joint that cannot move this frame, and rotating it
+         * would be transforming zeros. On Go2 that is nine columns of
+         * eighteen.
+         */
+        #define RD_J_LOCAL_COL(c) do {                                        \
+            rd_real_t in_[6], out_[6];                                        \
+            for (int r_ = 0; r_ < 6; ++r_) in_[r_] = J_out[r_*nv + (c)];      \
+            rd_spatial_transform_motion(T_f_w, in_, out_);                    \
+            for (int r_ = 0; r_ < 6; ++r_) J_out[r_*nv + (c)] = out_[r_];     \
+        } while (0)
+
+        if (chain->has_floating_base) {
+            for (rd_int_t k = 0; k < 6; ++k) RD_J_LOCAL_COL(k);
+        }
+        for (rd_int_t pi = 0; pi < plen; ++pi) {
+            rd_int_t ci = algo_vel_index(chain, path[pi]);
+            if (ci >= 0) RD_J_LOCAL_COL(ci);
+        }
+        #undef RD_J_LOCAL_COL
     }
     return RD_OK;
 }
@@ -216,9 +304,7 @@ rd_status_t rd_spatial_velocity(const rd_chain_t* chain,
     if (ref_frame == RD_FRAME_LOCAL) {
         memcpy(v_out, v_local, 6 * sizeof(rd_real_t));
     } else {
-        rd_real_t Tw[16];
-        algo_frame_world(chain, state, frame_id, Tw);
-        rd_spatial_transform_motion(Tw, v_local, v_out);
+        algo_frame_world_motion(chain, state, frame_id, v_local, v_out);
     }
     return RD_OK;
 }
@@ -274,9 +360,7 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
                                         &a[chain->dyn_parent[frame_id]*6], a_f);
     }
     if (ref_frame == RD_FRAME_WORLD) {
-        rd_real_t Tw[16];
-        algo_frame_world(chain, state, frame_id, Tw);
-        rd_spatial_transform_motion(Tw, a_f, a_out);
+        algo_frame_world_motion(chain, state, frame_id, a_f, a_out);
     } else {
         memcpy(a_out, a_f, 6*sizeof(rd_real_t));
     }

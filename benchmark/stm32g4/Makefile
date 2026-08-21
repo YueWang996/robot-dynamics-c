@@ -48,14 +48,14 @@ ifeq ($(ZEROWS),1)
 endif
 
 ifeq ($(RAM),1)
-  # e.g. make EXTRA=-ffast-math
-CFLAGS += $(EXTRA)
-
-LDSCRIPT := STM32G474_RAM.ld
+  LDSCRIPT := STM32G474_RAM.ld
   CFLAGS   += -DBENCH_G4_RAM=1
 else
   LDSCRIPT := STM32G474RETX_FLASH.ld
 endif
+
+# Appended last so it can override anything above, e.g. make EXTRA=-ffast-math
+CFLAGS += $(EXTRA)
 
 # rdimon = semihosting newlib. nano.specs keeps printf small enough to fit.
 LDFLAGS := $(CPU) -T$(LDSCRIPT) -Wl,--gc-sections -Wl,-Map=rd_bench.map \

@@ -171,7 +171,7 @@ static double measure(bench_fn_t fn, const rd_chain_t* chain,
 static rd_status_t case_update_kinematics(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
     rd_status_t st = rd_update_kinematics(c, (rd_state_t*)s, g_has_fb ? g_q_base : NULL, g_q, g_qd);
-    g_checksum += s->T_world[0];
+    g_checksum += s->T_dyn[0];
     return st;
 }
 

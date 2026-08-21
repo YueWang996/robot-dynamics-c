@@ -37,7 +37,6 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
      * match a chain pointer would silently skip computing every transform. */
     state->cached_for = NULL;
 
-    state->T_world           = buf + off; off += (size_t)n * 16;
     state->T_dyn             = buf + off; off += (size_t)n * 16;
     state->v                 = buf + off; off += (size_t)n * 6;
     state->vj                = buf + off; off += (size_t)n;
@@ -147,13 +146,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         rd_real_t v_joint = (actuated && qd) ? qd[base_dof + jidx] : RD_REAL(0.0);
         state->vj[node] = v_joint;
 
-        /* 2. Pose in the world, through the moving ancestor rather than the
-         *    immediate parent, so the fixed links between need no visit. */
-        rd_real_t* Tw = &state->T_world[node*16];
-        if (danc == -1) memcpy(Tw, Td, 16*sizeof(rd_real_t));
-        else rd_mat4_mul_se3(&state->T_world[danc*16], Td, Tw);
-
-        /* 3. Spatial velocity, in this link's body frame */
+        /* 2. Spatial velocity, in this link's body frame */
         rd_real_t* v_i = &state->v[node*6];
         if (parent == -1) {
             if (chain->has_floating_base && qd) {
