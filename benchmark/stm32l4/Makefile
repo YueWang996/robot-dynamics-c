@@ -47,12 +47,29 @@ endif
 CFLAGS += $(EXTRA)
 
 LDBASE := $(CPU) -Wl,--gc-sections -Wl,--no-warn-rwx-segments -nostartfiles \
-          --specs=nano.specs --specs=nosys.specs -lc -lm -u _printf_float
+          --specs=nano.specs --specs=nosys.specs -lc -lm
+# The suite prints floats; the codegen head-to-head deliberately does not, so
+# that build leaves newlib's float formatting out and spends the flash on the
+# generated code instead.
+ifneq ($(CODEGEN),1)
+  LDBASE += -u _printf_float
+endif
 
 COMMON := startup_glue.c l4_flash.c l4_out.c offcheck.c
 
+# CODEGEN=1 swaps the suite for the head-to-head against Pinocchio's
+# code-generated dynamics. 128 KB of flash is the budget here, so generate the
+# subset that fits: `python3 ../codegen/gen.py --robots go2 ...`.
+ifeq ($(CODEGEN),1)
+  CG := $(BENCH)/codegen
+  CFLAGS += -I$(CG)/generated
+  BENCH_SRCS := main.c $(COMMON) $(CG)/bench_codegen.c \
+                $(wildcard $(CG)/generated/*.c) \
+                $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+else
 BENCH_SRCS := main.c $(COMMON) $(BENCH)/bench_main.c \
               $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+endif
 # Same buffer sizes as every other port, so the L413 is not a special case.
 BENCH_DEFS :=
 # 64 KB, not the 48 KB of SRAM1 that STM32CubeProgrammer's device database

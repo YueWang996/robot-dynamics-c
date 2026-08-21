@@ -244,6 +244,49 @@ way lost — global `-O2` (38% slower), linking to RAM, a branch to skip
 redundant work (15% slower), rolling the Cholesky onto pointers. They were
 reverted, and the ones that stayed were kept because a board said so.
 
+### Against code generation
+
+The fastest thing a general-purpose library can hand you is not its recursion
+but the code it generates for your robot. Pinocchio traces RNEA, ABA and CRBA
+symbolically and CasADi emits the straight-line C: no loops, no model
+traversal, every operation for one specific robot spelled out, common
+subexpressions eliminated. Go2's ABA comes out as 5,773 operations and 122 KB
+of C. That is the right thing to measure against, so
+[`benchmark/codegen/`](benchmark/codegen/) does.
+
+Both sides are float32, both `-O3`, same compiler, same board, and both are
+checked against Pinocchio's own double-precision answer rather than against
+each other — they agree with it to about 1e-7, which is all float32 has.
+
+**On a desktop, code generation wins.** Go2, nanoseconds per call on an
+x86-64 host: RNEA 207 against 184, ABA 579 against 413, CRBA 232 against 140.
+An out-of-order core with register renaming and a 32 KB instruction cache is
+exactly what fully unrolled straight-line code is built for.
+
+**On the microcontroller it inverts.** Go2 on an STM32L413 at 80 MHz, cycles
+per call, `update_kinematics` + the algorithm against one generated call:
+
+| | RobotDynamics | code generation | |
+|---|---|---|---|
+| `rnea` | **13,161** | 50,729 | 3.9x |
+| `aba` | **35,042** | 72,215 | 2.1x |
+| `crba` | **14,696** | 44,823 | 3.1x |
+| `rnea` + `crba` | **23,239** | 95,534 | 4.1x |
+
+Two things account for it. A Cortex-M4 is in-order with 32 FP registers and no
+renaming, so several thousand simultaneously-live temporaries become spills to
+stack, and each one is a real load and a real store. And the code is 66,534
+bytes for Go2's three algorithms, against 24,794 bytes for the *whole library*
+— running the same binary at 16 MHz, where the flash needs no wait states,
+shows the generated code paying a **25–29%** instruction-fetch tax where our
+RNEA and CRBA pay 7–9%. The exception proves the rule: our ABA pays 30% too,
+because its inner loop is the one thing here that does not fit the 1 KB
+instruction cache.
+
+Code generation trades code size for arithmetic. On a desktop that is a good
+trade. One robot's worth of it is 2.7x the size of this entire library, which
+handles any robot.
+
 ### Where the remaining time goes
 
 At 170 MHz the G474's flash needs four wait states, and the ART accelerator's

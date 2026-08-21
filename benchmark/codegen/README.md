@@ -50,5 +50,12 @@ openocd -f interface/cmsis-dap.cfg -f target/stm32g4x.cfg \
 ```
 
 The generated sources are 423 KB of C for the three robots, which builds to
-about 185 KB of Cortex-M4 code. It fits a 512 KB part; it does not fit
-everywhere, and that is part of what the comparison is about.
+about 185 KB of Cortex-M4 code. The STM32L413 port has 128 KB to link into, so
+generate the subset that fits -- `gen.py --robots go2` -- and bench_codegen.c
+drops the rest automatically; it keys off the `CG_<ROBOT>_NQ` macros cg_data.h
+defines. Go2's three algorithms alone are 66,534 bytes of Cortex-M4 code
+against 24,794 for the whole library.
+
+Results: [`../results/codegen_stm32l413.csv`](../results/codegen_stm32l413.csv),
+summarised in the top-level README. Short version: code generation wins on a
+desktop by 1.1-1.7x and loses on a Cortex-M4 by 2.1-4.1x.

@@ -21,24 +21,38 @@
 #include "bench_platform.h"
 #include "cg_data.h"
 
+/* cg_data.h defines CG_<ROBOT>_NQ only for the robots gen.py was asked for, so
+ * a flash-constrained part can carry a subset: `gen.py --robots go2`. */
+#ifdef CG_SPINE_NQ
 #include "models/model_spine.h"
+#endif
+#ifdef CG_XARM7_NQ
 #include "models/model_xarm7.h"
+#endif
+#ifdef CG_GO2_NQ
 #include "models/model_go2.h"
+#endif
 
 #define MAXNV 18
 #define MAXN  40
 
 /* CasADi's calling convention. */
 typedef int (*cg_fn)(const float** arg, float** res, int* iw, float* w, int mem);
+#ifdef CG_SPINE_NQ
 int spine_rnea(const float**, float**, int*, float*, int);
 int spine_aba (const float**, float**, int*, float*, int);
 int spine_crba(const float**, float**, int*, float*, int);
+#endif
+#ifdef CG_XARM7_NQ
 int xarm7_rnea(const float**, float**, int*, float*, int);
 int xarm7_aba (const float**, float**, int*, float*, int);
 int xarm7_crba(const float**, float**, int*, float*, int);
+#endif
+#ifdef CG_GO2_NQ
 int go2_rnea  (const float**, float**, int*, float*, int);
 int go2_aba   (const float**, float**, int*, float*, int);
 int go2_crba  (const float**, float**, int*, float*, int);
+#endif
 
 static rd_real_t g_buf[RD_STATE_BUF_FLOATS(MAXN)];
 static rd_real_t g_out[MAXNV * MAXNV];
@@ -77,13 +91,19 @@ static rd_real_t worst(const rd_real_t* a, const float* b, int n) {
     (iters_out) = (double)best_ * 1000.0 / (double)n_;   /* ns per call */   \
 } while (0)
 
+/* Integer formatting throughout: pulling newlib's float printf into a build
+ * that already carries 190 KB of generated code costs more flash than the
+ * comparison is worth. ns are in tenths, errors in parts per billion. */
 static void row(const char* robot, const char* what, double ours, double theirs,
                 double err_ours, double err_theirs) {
     uint32_t hz = bench_clk_hz();
-    printf("%s,%s,%.1f,%.1f,%.0f,%.0f,%.2f,%.2e,%.2e\n",
-           robot, what, ours, theirs,
-           hz ? ours * 1e-9 * hz : 0.0, hz ? theirs * 1e-9 * hz : 0.0,
-           theirs / ours, err_ours, err_theirs);
+    printf("%s,%s,%ld,%ld,%ld,%ld,%ld,%ld,%ld\n",
+           robot, what,
+           (long)(ours * 10.0 + 0.5), (long)(theirs * 10.0 + 0.5),
+           (long)(hz ? ours * 1e-9 * hz + 0.5 : 0.0),
+           (long)(hz ? theirs * 1e-9 * hz + 0.5 : 0.0),
+           (long)(theirs / ours * 100.0 + 0.5),
+           (long)(err_ours * 1e9 + 0.5), (long)(err_theirs * 1e9 + 0.5));
 }
 
 static void run(const char* name, const rd_model_t* model,
@@ -160,22 +180,33 @@ int bench_run(void) {
            BENCH_BOARD, BENCH_ARCH, (unsigned long)bench_clk_hz());
     printf("# codegen=Pinocchio via pinocchio.casadi, CasADi C, float32, -O3\n");
     printf("# err=worst relative error against Pinocchio's own double-precision result\n");
-    printf("robot,algorithm,rd_ns,codegen_ns,rd_cycles,codegen_cycles,speedup,rd_err,codegen_err\n");
+    printf("# units: ns are tenths of a nanosecond, speedup is x100, err is parts per billion\n");
+    printf("robot,algorithm,rd_ns10,codegen_ns10,rd_cycles,codegen_cycles,speedup100,rd_err_ppb,codegen_err_ppb\n");
 
+#ifdef CG_SPINE_NQ
     run("spine", spine_model_get(), rd_spine_qbase, rd_spine_qjoints,
         cg_spine_v, cg_spine_a, cg_spine_tau_in, cg_spine_q,
         cg_spine_tau_ref, cg_spine_ddq_ref, cg_spine_M_ref, CG_SPINE_NV,
         spine_rnea, spine_aba, spine_crba);
+#endif
+#ifdef CG_XARM7_NQ
     run("xarm7", xarm7_model_get(), 0, rd_xarm7_qjoints,
         cg_xarm7_v, cg_xarm7_a, cg_xarm7_tau_in, cg_xarm7_q,
         cg_xarm7_tau_ref, cg_xarm7_ddq_ref, cg_xarm7_M_ref, CG_XARM7_NV,
         xarm7_rnea, xarm7_aba, xarm7_crba);
+#endif
+#ifdef CG_GO2_NQ
     run("go2", go2_model_get(), rd_go2_qbase, rd_go2_qjoints,
         cg_go2_v, cg_go2_a, cg_go2_tau_in, cg_go2_q,
         cg_go2_tau_ref, cg_go2_ddq_ref, cg_go2_M_ref, CG_GO2_NV,
         go2_rnea, go2_aba, go2_crba);
+#endif
 
-    printf("END_CSV\n# sink=%f\n", (double)g_sink);
+    {   /* the sink exists only to defeat dead-code elimination */
+        rd_real_t v = g_sink; unsigned long bits;
+        memcpy(&bits, &v, sizeof(v) < sizeof(bits) ? sizeof(v) : sizeof(bits));
+        printf("END_CSV\n# sink=0x%lx (ignore)\n", bits);
+    }
     return 0;
 }
 

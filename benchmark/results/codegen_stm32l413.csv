@@ -1,0 +1,17 @@
+# board=STM32L413RC @ 80 MHz (Cortex-M4F, 4 flash wait states)
+# opponent=Pinocchio's code generation, traced with pinocchio.casadi, CasADi C
+# both=float32, -O3, arm-none-eabi-gcc 15.2.1, same board, same timing protocol
+# err=worst relative error against Pinocchio's own double-precision result
+# code=generated go2 rnea+aba+crba 66,534 bytes; whole RobotDynamics library 24,794 bytes
+# note=cycles are what matters here; ns follow from the 80 MHz clock. The 16 MHz
+#   rows are the same binary at zero flash wait states, which separates the core
+#   from the fetch. Only go2 fits the 128 KB flash budget alongside the library.
+robot,algorithm,clk_mhz,rd_cycles,codegen_cycles,speedup,rd_err,codegen_err
+go2,rnea,80,13161,50729,3.85,1.3e-07,1.3e-07
+go2,aba,80,35042,72215,2.06,2.6e-07,8.5e-08
+go2,crba,80,14696,44823,3.05,1.2e-07,4.0e-09
+go2,rnea+crba,80,23239,95534,4.11,,
+go2,rnea,16,12083,39215,3.25,1.3e-07,1.3e-07
+go2,aba,16,26985,56111,2.08,2.6e-07,8.5e-08
+go2,crba,16,13698,36162,2.64,1.2e-07,4.0e-09
+go2,rnea+crba,16,21661,75369,3.48,,
