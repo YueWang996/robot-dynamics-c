@@ -169,6 +169,9 @@ STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 | `fd_crba` | 55.5 | 84.5 | 197.6 |
 | `jacobian_world` | 10.7 | 15.1 | 12.3 |
 
+(the G474 file predates the last two rounds -- worth ~3% on a tick and ~11% on
+`aba`; the STM32L413 numbers in `benchmark/results/` are the current ones)
+
 Control-loop budgets on that part:
 
 | | spine | xarm7 | go2 |
@@ -179,11 +182,12 @@ Control-loop budgets on that part:
 
 **Forward dynamics has two methods and the caller picks.**
 `rd_forward_dynamics(..., RD_FD_ABA | RD_FD_CRBA, work, qdd)`. CRBA builds M
-and h and factorises; it needs `rd_forward_dynamics_work()` floats of scratch
-and wins below roughly ten to twelve velocity DOF -- xarm7 by 16%, spine by
-3%, while Go2 at nv=18 goes the other way by 8%. A floating base pushes the
-crossover down: its six DOF are ancestors of every joint, so M has no sparsity
-for the factorisation to exploit. `rd_aba()` is still there and unchanged.
+and h and factorises; it needs `rd_forward_dynamics_work()` floats of scratch.
+On the STM32L413: ABA wins for spine by 10% and Go2 by 16%, CRBA wins for
+xarm7 by 19%. Two effects pull opposite ways -- the solve is nv^3 and a
+floating base gives the mass matrix no sparsity, but ABA's congruence has a
+fast path for joints whose origin carries no rotation, which xarm7's quarter
+turns miss and most URDFs hit. Tell people to measure their own model.
 
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need

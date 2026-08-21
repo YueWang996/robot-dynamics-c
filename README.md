@@ -126,17 +126,17 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | M33 @ 150<br><sub>RP2350</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.4 | **56.8** | 155.2 | 1458.8 | 354.5 |
+| `update_kinematics` | 27.4 | **55.3** | 155.2 | 1458.8 | 354.5 |
 | `rnea` | 51.5 | **100.6** | 125.0 | 1650.3 | 939.4 |
 | `crba` | 60.9 | **126.1** | 234.4 | 2293.0 | 848.9 |
-| `aba` | 181.0 | **372.1** | 399.6 | 4239.1 | 2726.6 |
-| torque tick | 79 µs<br>12.7 kHz | **157 µs<br>6.4 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | 1294 µs<br>773 Hz |
-| operational space | 140 µs<br>7.2 kHz | **283 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
+| `aba` | 181.0 | **331.4** | 399.6 | 4239.1 | 2726.6 |
+| torque tick | 79 µs<br>12.7 kHz | **156 µs<br>6.4 kHz** | 280 µs<br>3.6 kHz | 3109 µs<br>322 Hz | 1294 µs<br>773 Hz |
+| operational space | 140 µs<br>7.2 kHz | **282 µs<br>3.5 kHz** | 515 µs<br>1.9 kHz | 5402 µs<br>185 Hz | 2143 µs<br>467 Hz |
 
 > The STM32L413 column is the newest. The G474 and ESP32-C6 columns predate the
-> last change, which is worth about 3% on a torque tick and 12% on
-> `spatial_acceleration`; they will be refreshed when those boards are back on
-> the desk. The two RP2350 columns are the properly stale ones, 2–3x behind.
+> last two changes, worth about 3% on a torque tick, 12% on
+> `spatial_acceleration` and 11% on `aba`; they will be refreshed when those
+> boards are back on the desk. The two RP2350 columns are the properly stale ones, 2–3x behind.
 
 The two Cortex-M4F parts agree to **within 2.5% on cycles per call** across
 every algorithm (median 0.975), so **another M4F can be scaled from these by
@@ -161,24 +161,22 @@ robot rather than of the library, so it is your choice rather than a heuristic:
 | `RD_FD_ABA` | articulated-body | none beyond `rd_state_t` | O(n) |
 | `RD_FD_CRBA` | M(q), h(q,qd), then Cholesky | `nv*nv + nv` floats | O(n³) in the solve |
 
-Measured on the STM32G474, `update_kinematics` + the method:
+Measured on the STM32L413, `update_kinematics` + the method:
 
 | Robot | nv | ABA | CRBA | |
 |---|---|---|---|---|
-| `xarm7` | 7, fixed base | 122.0 µs | **102.4 µs** | CRBA −16% |
-| `spine` | 9, floating base | 67.8 µs | **65.8 µs** | CRBA −3% |
-| `go2` | 18, floating base | **208.3 µs** | 225.0 µs | ABA −8% |
+| `spine` | 9, floating base | **122 µs** | 135 µs | ABA −10% |
+| `xarm7` | 7, fixed base | 257 µs | **208 µs** | CRBA −19% |
+| `go2` | 18, floating base | **387 µs** | 462 µs | ABA −16% |
 
-The same ordering holds on the STM32L413 (−17% / −3% / +8%) and on the
-FPU-less ESP32-C6 (−13% / −13% / +3%), so the crossover is a property of the
-robot rather than of the core.
-
-The crossover is around ten to twelve velocity DOF, and a floating base pushes
-it down: its six DOF are ancestors of every joint, so the mass matrix has no
-sparsity for the factorisation to exploit. The CRBA route also hands back M
-and h, which an operational-space controller wants anyway. The benchmark's
-`fd_crba` row against `aba` is exactly this comparison, so you can run it on
-your own model.
+Two things move the line, and they pull in opposite directions. The solve grows
+as nv³ with nothing to skip — a floating base makes that worse, because its six
+DOF are ancestors of every joint, so the mass matrix has no sparsity for the
+factorisation to exploit. And ABA's articulated-inertia congruence gets a fast
+path when a joint's origin carries no rotation, which most URDFs give you: Go2
+and the spine take it at every joint and ABA wins, xarm7's origins are quarter
+turns so it does not and CRBA wins. **Measure your own model** — the
+benchmark's `fd_crba` row against `aba` is exactly this comparison.
 
 ### How it gets this fast
 

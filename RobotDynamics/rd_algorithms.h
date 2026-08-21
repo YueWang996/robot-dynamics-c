@@ -145,17 +145,19 @@ rd_status_t rd_crba(const rd_chain_t* chain,
  *                faster of the two. It also hands you M and h, which an
  *                operational-space controller wants anyway.
  *
- * Measured on an STM32G474, forward dynamics = update_kinematics + the method:
+ * Measured on an STM32L413, forward dynamics = update_kinematics + the method:
  *
- *   xarm7   7 dof, fixed base       CRBA -15%
- *   spine   9 dof, floating base    CRBA  -1%
- *   go2    18 dof, floating base    ABA  -10%
+ *   spine   9 dof, floating base    ABA  -10%
+ *   xarm7   7 dof, fixed base       CRBA -19%
+ *   go2    18 dof, floating base    ABA  -16%
  *
- * The crossover is around ten to twelve velocity DOF, and a floating base
- * pushes it down: its six DOF are ancestors of every joint, so the mass matrix
- * has no sparsity for the factorisation to exploit and the solve grows as
- * nv^3 with nothing to skip. Measure your own model -- the benchmark's
- * `fd_crba` row against `aba` is exactly this comparison.
+ * Two things move the line, in opposite directions. The solve grows as nv^3
+ * with nothing to skip, and a floating base makes that worse -- its six DOF
+ * are ancestors of every joint, so the mass matrix has no sparsity for the
+ * factorisation to exploit. But ABA's articulated-inertia congruence has a
+ * fast path for joints whose origin carries no rotation, which most URDFs
+ * give you. Measure your own model: the benchmark's `fd_crba` row against
+ * `aba` is exactly this comparison.
  */
 typedef enum {
     RD_FD_ABA = 0,

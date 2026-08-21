@@ -304,14 +304,31 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         rd_idx_t node = chain->dyn_order[di];
         rd_dyn_node_t* d = &chain->dyn[di];
         rd_idx_t j = chain->joint_idx[node];
+        rd_idx_t par = chain->parent_list[node];
         d->node   = node;
-        d->parent = chain->parent_list[node];
+        d->parent = par;
         d->danc   = chain->dyn_parent[node];
-        d->jidx   = j;
         d->vidx   = (j < 0) ? (rd_idx_t)-1
                             : (rd_idx_t)(chain->has_floating_base ? (6 + j) : j);
         d->s_axis = chain->s_axis[node];
         d->s_sign = chain->s_sign[node];
+
+        /* rd_update_kinematics builds T_dyn as the joint offset composed with
+         * the joint's own rotation, so when the offset carries no rotation and
+         * the parent is itself a dynamics node, T_dyn's rotation *is* that axis
+         * rotation. Compared exactly: a near-identity offset is a different
+         * transform and has to take the general path. */
+        d->axis_rot = -1;
+        if (chain->joint_type[node] == RD_JOINT_REVOLUTE &&
+            chain->dyn_parent[node] == par &&
+            !(par == -1 && chain->has_floating_base)) {
+            const rd_real_t* O = &chain->T_joint_offset[node*16];
+            if (O[0] == RD_REAL(1.0) && O[1] == RD_REAL(0.0) && O[2] == RD_REAL(0.0) &&
+                O[4] == RD_REAL(0.0) && O[5] == RD_REAL(1.0) && O[6] == RD_REAL(0.0) &&
+                O[8] == RD_REAL(0.0) && O[9] == RD_REAL(0.0) && O[10] == RD_REAL(1.0)) {
+                d->axis_rot = (rd_idx_t)(chain->s_axis[node] - 3);
+            }
+        }
         chain->dyn_slot[node] = (rd_idx_t)di;
     }
 

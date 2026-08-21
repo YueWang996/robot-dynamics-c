@@ -26,9 +26,17 @@ typedef struct {
     rd_idx_t  node;     /**< Node index */
     rd_idx_t  parent;   /**< parent_list[node] */
     rd_idx_t  danc;     /**< Nearest moving ancestor, or -1 for the root */
-    rd_idx_t  jidx;     /**< Actuated joint index, or -1 */
-    rd_idx_t  vidx;     /**< Index into qd/qdd/tau, or -1 for a node with no DOF */
+    rd_idx_t  vidx;     /**< Index into qd/qdd/tau, or -1 for a node with no DOF.
+                         *   The index into q_joints is this minus the base's
+                         *   six, which is why jidx is not stored: the record is
+                         *   kept to sixteen bytes so that walking it is a shift
+                         *   rather than a multiply. */
     rd_idx_t  s_axis;   /**< Motion subspace component, 0..5 */
+    rd_idx_t  axis_rot; /**< Coordinate axis 0..2 when T_dyn's rotation is that
+                         *   axis rotation and nothing else -- true whenever a
+                         *   revolute joint's origin carries no rotation and its
+                         *   parent is itself a dynamics node, which is the
+                         *   ordinary case in a URDF. -1 when it is general. */
     rd_real_t s_sign;   /**< Its sign; zero for a node with no DOF */
 } rd_dyn_node_t;
 

@@ -61,6 +61,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
     if (state->n_nodes < chain->n_nodes) return RD_ERR_INVALID_SIZE;
 
     const rd_int_t n = chain->n_nodes;
+    const rd_int_t base_dof = chain->has_floating_base ? 6 : 0;
 
     /* Most of what this loop computes does not depend on the configuration at
      * all. The motion subspace S is a function of the joint axis and the link
@@ -88,6 +89,12 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
          * per-tick loop stores six floats instead of sixteen. */
         for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
             const rd_dyn_node_t* d = &chain->dyn[di];
+            /* Deliberately *not* d->axis_rot, which additionally wants the
+             * joint offset's rotation to be the identity. That matters to the
+             * congruence in rd_aba(), which needs T_dyn's rotation to be the
+             * axis rotation itself; it does not matter here, because column k
+             * and the translation come through unchanged whatever the offset's
+             * rotation is. */
             if (d->s_axis < 3 || d->vidx < 0) continue;   /* revolute only */
             if (d->danc != d->parent) continue;           /* no fixed link between */
             if (d->parent == -1 && chain->has_floating_base) continue;
@@ -148,11 +155,11 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 if (under_dyn && d->s_axis >= 3) {
                     /* The ten constant floats are already in place. */
                     rd_real_t sn, cn;
-                    rd_sincos(q_joints[d->jidx], &sn, &cn);
+                    rd_sincos(q_joints[d->vidx - base_dof], &sn, &cn);
                     rd_mat4_joint_cols(A, d->s_axis, sn * d->s_sign, cn, T_pc);
                 } else {
                     rd_mat4_mul_joint(A, d->s_axis, d->s_sign,
-                                      q_joints[d->jidx], T_pc);
+                                      q_joints[d->vidx - base_dof], T_pc);
                 }
             } else {
                 memcpy(T_pc, &chain->T_joint_offset[node*16],

@@ -801,58 +801,138 @@ static RD_INLINE void rd_rbi_col(const rd_real_t* RD_RESTRICT ic, int k,
 }
 
 /*
+ * out = Rk(c,s) * C * Rk(c,s)^T, for a rotation about coordinate axis k.
+ *
+ * Such a rotation leaves row k and column k of C alone and mixes the other two
+ * by the same 2x2, once on the rows and once on the columns: 24 multiplies
+ * instead of 45, and the rotation is two numbers rather than nine. K is the
+ * axis, I and J the other two -- all three compile-time constants, because a
+ * run-time axis here would need a base register per row touched and cost more
+ * than the multiplies it saves. That mistake was measured once already.
+ */
+#define RD_AXCONG_(K, I, J)                                                 \
+    do {                                                                    \
+        rd_real_t D_[9];                                                    \
+        for (int b_ = 0; b_ < 3; ++b_) {                                    \
+            const rd_real_t ci_ = C[(I)*3+b_], cj_ = C[(J)*3+b_];           \
+            D_[(K)*3+b_] = C[(K)*3+b_];                                     \
+            D_[(I)*3+b_] = c*ci_ - s*cj_;                                   \
+            D_[(J)*3+b_] = s*ci_ + c*cj_;                                   \
+        }                                                                   \
+        for (int a_ = 0; a_ < 3; ++a_) {                                    \
+            const rd_real_t di_ = D_[a_*3+(I)], dj_ = D_[a_*3+(J)];         \
+            out[a_*3+(K)] = D_[a_*3+(K)];                                   \
+            out[a_*3+(I)] = c*di_ - s*dj_;                                  \
+            out[a_*3+(J)] = s*di_ + c*dj_;                                  \
+        }                                                                   \
+    } while (0)
+
+static RD_INLINE void rd_axis_congruence3(rd_int_t k, rd_real_t c, rd_real_t s,
+                                          const rd_real_t* RD_RESTRICT C,
+                                          rd_real_t* RD_RESTRICT out) {
+    switch (k) {
+        case 0:  RD_AXCONG_(0, 1, 2); break;
+        case 1:  RD_AXCONG_(1, 2, 0); break;
+        default: RD_AXCONG_(2, 0, 1); break;
+    }
+}
+
+#undef RD_AXCONG_
+
+/* out = R * C * R^T, row-major 3x3, for a general rotation. */
+static RD_INLINE void rd_congruence3_rt(const rd_real_t R[9], const rd_real_t C[9],
+                                        rd_real_t out[9]) {
+    rd_real_t RC[9];
+    rd_mat3_mul(R, C, RC);
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out[i*3+j] = RC[i*3+0]*R[j*3+0] + RC[i*3+1]*R[j*3+1] + RC[i*3+2]*R[j*3+2];
+        }
+    }
+}
+
+/* out = A^T * [q]x, row-major 3x3. 18 mults, no transpose materialised. */
+static RD_INLINE void rd_mat3T_mul_skew(const rd_real_t A[9], const rd_real_t q[3],
+                                        rd_real_t out[9]) {
+    for (int i = 0; i < 3; ++i) {
+        const rd_real_t a0 = A[0*3+i], a1 = A[1*3+i], a2 = A[2*3+i];
+        out[i*3+0] =  a1*q[2] - a2*q[1];
+        out[i*3+1] = -a0*q[2] + a2*q[0];
+        out[i*3+2] =  a0*q[1] - a1*q[0];
+    }
+}
+
+/*
  * accum += Ad(inv(T))^T I Ad(inv(T)), all in packed form -- the articulated
  * inertia of a child, added to its parent's, given the child's pose in the
  * parent.
  *
- * Same block algebra as the 6x6 version; A21 comes from A12 transposed and BL
- * is never written. The inverse is folded into the two lines that read T:
- * inv(T)'s rotation is T's transposed, which is a different set of subscripts
- * and not an operation, and its translation is nine multiplies that stay in
- * registers. Materialising the 4x4 instead would spend a store and a reload on
- * every one of its sixteen floats.
+ * Rotation first, then translation. Conjugating by the rotation turns the
+ * inverse's translation, -R^T t, into plain -t: rotate the three blocks first
+ * and the skew matrix the translation contributes is the transform's own
+ * translation negated, with nothing left to compute. Three congruences and
+ * four skew products, and A21 comes from A12 transposed so the lower-left is
+ * never formed.
+ *
+ * axis_k >= 0 says the rotation is about coordinate axis k and nothing else --
+ * what T_dyn holds whenever a revolute joint's origin carries no rotation,
+ * which is the ordinary case in a URDF and true of every joint on a quadruped.
+ * Then the three congruences cost 24 multiplies each instead of 45.
  */
 static RD_INLINE void rd_abi_congruence_accum(const rd_real_t* RD_RESTRICT T,
+                                              rd_int_t axis_k,
                                               const rd_real_t* RD_RESTRICT I_in,
                                               rd_real_t* RD_RESTRICT accum) {
-    const rd_real_t R[9] = { T[0], T[1], T[2],
-                             T[4], T[5], T[6],
-                             T[8], T[9], T[10] };
-    const rd_real_t t0 = T[12], t1 = T[13], t2 = T[14];
-    const rd_real_t p[3] = { -(R[0]*t0 + R[1]*t1 + R[2]*t2),
-                             -(R[3]*t0 + R[4]*t1 + R[5]*t2),
-                             -(R[6]*t0 + R[7]*t1 + R[8]*t2) };
-
-    rd_real_t A11[9], C[9], S12[9];
-    A11[0]=I_in[0]; A11[1]=I_in[1]; A11[2]=I_in[2];
-    A11[3]=I_in[1]; A11[4]=I_in[3]; A11[5]=I_in[4];
-    A11[6]=I_in[2]; A11[7]=I_in[4]; A11[8]=I_in[5];
-
-    rd_congruence3_sym_accum(R, A11, accum);
-
-    /* C = A11 P + A12,  TR += R^T C R */
-    rd_mat3_mul_skew(A11, p, C);
-    for (int i = 0; i < 9; ++i) C[i] += I_in[6 + i];
-    rd_congruence3(R, C, S12);
-    for (int i = 0; i < 9; ++i) accum[6 + i] += S12[i];
-
-    /* C = A22 + A21 P + (A21 P)^T - P A11 P,  BR += R^T C R */
+    rd_real_t TL[9], G[9], H[9];
     {
-        rd_real_t t[9], A21P[9];
-        rd_skew_mul_mat3(p, A11, t);
-        rd_mat3_mul_skew(t, p, C);                 /* P A11 P */
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) t[i*3+j] = I_in[6 + j*3 + i];  /* A21 */
-        }
-        rd_mat3_mul_skew(t, p, A21P);
-        static const int w[9] = {15,16,17, 16,18,19, 17,19,20};
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                C[i*3+j] = I_in[w[i*3+j]] + A21P[i*3+j] + A21P[j*3+i] - C[i*3+j];
-            }
+        rd_real_t A[9];
+        A[0]=I_in[0]; A[1]=I_in[1]; A[2]=I_in[2];
+        A[3]=I_in[1]; A[4]=I_in[3]; A[5]=I_in[4];
+        A[6]=I_in[2]; A[7]=I_in[4]; A[8]=I_in[5];
+        rd_real_t B[9];
+        B[0]=I_in[15]; B[1]=I_in[16]; B[2]=I_in[17];
+        B[3]=I_in[16]; B[4]=I_in[18]; B[5]=I_in[19];
+        B[6]=I_in[17]; B[7]=I_in[19]; B[8]=I_in[20];
+
+        if (axis_k >= 0) {
+            const rd_int_t i = (axis_k == 2) ? 0 : (axis_k + 1);
+            const rd_int_t j = (i == 2) ? 0 : (i + 1);
+            const rd_real_t c = T[i*4 + i], sn = T[i*4 + j];
+            rd_axis_congruence3(axis_k, c, sn, A, TL);
+            rd_axis_congruence3(axis_k, c, sn, I_in + 6, G);
+            rd_axis_congruence3(axis_k, c, sn, B, H);
+        } else {
+            const rd_real_t R[9] = { T[0], T[4], T[8],
+                                     T[1], T[5], T[9],
+                                     T[2], T[6], T[10] };
+            rd_congruence3_rt(R, A, TL);
+            rd_congruence3_rt(R, I_in + 6, G);
+            rd_congruence3_rt(R, B, H);
         }
     }
-    rd_congruence3_sym_accum(R, C, accum + 15);
+
+    accum[0] += TL[0]; accum[1] += TL[1]; accum[2] += TL[2];
+    accum[3] += TL[4]; accum[4] += TL[5]; accum[5] += TL[8];
+
+    const rd_real_t q[3] = { -T[12], -T[13], -T[14] };
+
+    {   /* TR = TL Q + G,  Q = [q]x */
+        rd_real_t TLQ[9];
+        rd_mat3_mul_skew(TL, q, TLQ);
+        for (int i = 0; i < 9; ++i) accum[6 + i] += TLQ[i] + G[i];
+    }
+    {   /* BR = H + G^T Q + (G^T Q)^T - Q TL Q */
+        rd_real_t K[9], QT[9], QTQ[9];
+        rd_mat3T_mul_skew(G, q, K);
+        rd_skew_mul_mat3(q, TL, QT);
+        rd_mat3_mul_skew(QT, q, QTQ);
+        accum[15] += H[0] + K[0] + K[0] - QTQ[0];
+        accum[16] += H[1] + K[1] + K[3] - QTQ[1];
+        accum[17] += H[2] + K[2] + K[6] - QTQ[2];
+        accum[18] += H[4] + K[4] + K[4] - QTQ[4];
+        accum[19] += H[5] + K[5] + K[7] - QTQ[5];
+        accum[20] += H[8] + K[8] + K[8] - QTQ[8];
+    }
 }
 
 static RD_INLINE void rd_spatial_inertia_congruence(const rd_real_t* RD_RESTRICT T,
