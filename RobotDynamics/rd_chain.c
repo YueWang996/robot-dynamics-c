@@ -50,6 +50,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->dyn_parent = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_child = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->dyn_child_start = (rd_int_t*)RD_CALLOC(n + 1, sizeof(rd_int_t));
+    chain->dyn = (rd_dyn_node_t*)RD_MALLOC(sizeof(rd_dyn_node_t) * n);
+    chain->dyn_slot = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->inertia_compact = (rd_real_t*)RD_CALLOC(n * RD_INERTIA_COMPACT_LEN,
                                                    sizeof(rd_real_t));
 
@@ -64,7 +66,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
         !chain->inertia_compact ||
         !chain->s_axis || !chain->s_sign || !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
-        !chain->dyn_child_start) {
+        !chain->dyn_child_start || !chain->dyn || !chain->dyn_slot) {
         rd_chain_free(chain);
         return RD_ERR_ALLOC_FAILED;
     }
@@ -296,6 +298,23 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         }
     }
 
+    /* The per-node control block the traversals read, gathered once. */
+    for (rd_int_t i = 0; i < n; ++i) chain->dyn_slot[i] = -1;
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node = chain->dyn_order[di];
+        rd_dyn_node_t* d = &chain->dyn[di];
+        rd_idx_t j = chain->joint_idx[node];
+        d->node   = node;
+        d->parent = chain->parent_list[node];
+        d->danc   = chain->dyn_parent[node];
+        d->jidx   = j;
+        d->vidx   = (j < 0) ? (rd_idx_t)-1
+                            : (rd_idx_t)(chain->has_floating_base ? (6 + j) : j);
+        d->s_axis = chain->s_axis[node];
+        d->s_sign = chain->s_sign[node];
+        chain->dyn_slot[node] = (rd_idx_t)di;
+    }
+
     /* CSR of dynamics children, indexed by node. */
     for (rd_int_t i = 0; i <= n; ++i) chain->dyn_child_start[i] = 0;
     for (rd_int_t i = 0; i < n; ++i) {
@@ -405,6 +424,8 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->dyn_parent);
     RD_FREE(chain->dyn_child);
     RD_FREE(chain->dyn_child_start);
+    RD_FREE(chain->dyn);
+    RD_FREE(chain->dyn_slot);
     
     /* Zero out the struct */
     memset(chain, 0, sizeof(rd_chain_t));

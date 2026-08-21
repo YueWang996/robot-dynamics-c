@@ -61,7 +61,6 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
     if (state->n_nodes < chain->n_nodes) return RD_ERR_INVALID_SIZE;
 
     const rd_int_t n = chain->n_nodes;
-    const rd_int_t base_dof = chain->has_floating_base ? 6 : 0;
 
     /* Most of what this loop computes does not depend on the configuration at
      * all. The motion subspace S is a function of the joint axis and the link
@@ -102,15 +101,15 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
 
     /* Per tick: only the nodes that can move. */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->parent_list[node];
-        rd_idx_t danc   = chain->dyn_parent[node];
-        rd_idx_t jidx   = chain->joint_idx[node];
-        rd_int_t jtype  = chain->joint_type[node];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node   = d->node;
+        const rd_idx_t parent = d->parent;
+        const rd_idx_t danc   = d->danc;
 
         const int root_fb  = (parent == -1 && chain->has_floating_base);
-        const int actuated = (jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
-                                             jtype == RD_JOINT_PRISMATIC);
+        /* joint_idx is set only for revolute and prismatic joints, so a
+         * velocity index is exactly what "this joint can move" means. */
+        const int actuated = (d->vidx >= 0);
         rd_real_t* Td  = &state->T_dyn[node*16];
 
         /* Built straight into T_dyn when the parent is itself a dynamics node,
@@ -132,8 +131,8 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], T_pc);
             } else if (actuated && q_joints) {
                 rd_mat4_mul_joint(&chain->T_joint_offset[node*16],
-                                  chain->s_axis[node], chain->s_sign[node],
-                                  q_joints[jidx], T_pc);
+                                  d->s_axis, d->s_sign,
+                                  q_joints[d->jidx], T_pc);
             } else {
                 memcpy(T_pc, &chain->T_joint_offset[node*16],
                        16 * sizeof(rd_real_t));
@@ -143,7 +142,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
             }
         }
 
-        rd_real_t v_joint = (actuated && qd) ? qd[base_dof + jidx] : RD_REAL(0.0);
+        rd_real_t v_joint = (actuated && qd) ? qd[d->vidx] : RD_REAL(0.0);
         state->vj[node] = v_joint;
 
         /* 2. Spatial velocity, in this link's body frame */
@@ -157,7 +156,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
         } else {
             rd_spatial_transform_motion_inv(Td, &state->v[danc*6], v_i);
             if (actuated) {
-                v_i[chain->s_axis[node]] += chain->s_sign[node] * v_joint;
+                v_i[d->s_axis] += d->s_sign * v_joint;
             }
         }
     }

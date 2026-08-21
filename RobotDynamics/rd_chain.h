@@ -21,6 +21,17 @@ extern "C" {
  * Chain Data Structure
  * ============================================================================ */
 
+/** Per-node control block for the dynamics traversals. See rd_chain_t::dyn. */
+typedef struct {
+    rd_idx_t  node;     /**< Node index */
+    rd_idx_t  parent;   /**< parent_list[node] */
+    rd_idx_t  danc;     /**< Nearest moving ancestor, or -1 for the root */
+    rd_idx_t  jidx;     /**< Actuated joint index, or -1 */
+    rd_idx_t  vidx;     /**< Index into qd/qdd/tau, or -1 for a node with no DOF */
+    rd_idx_t  s_axis;   /**< Motion subspace component, 0..5 */
+    rd_real_t s_sign;   /**< Its sign; zero for a node with no DOF */
+} rd_dyn_node_t;
+
 typedef struct {
     rd_int_t n_nodes;              /**< Number of links */
     rd_int_t n_joints;             /**< Number of actuated joints */
@@ -85,6 +96,16 @@ typedef struct {
     rd_idx_t*  dyn_parent;         /**< n_nodes, nearest moving ancestor or -1 */
     rd_idx_t*  dyn_child;          /**< n_nodes, CSR values */
     rd_int_t*  dyn_child_start;    /**< n_nodes+1, CSR offsets indexed by node */
+
+    /* Everything the dynamics traversals need to know about a node, gathered
+     * into one record. rd_update_kinematics, RNEA, CRBA and ABA all walk
+     * dyn_order and then look the same handful of facts up in six separate
+     * arrays: a base pointer out of this struct and an indexed load for each,
+     * six pointers competing for the same registers as the transforms. One
+     * sequential sixteen-byte record leaves a single pointer live and reads
+     * in one burst. */
+    rd_dyn_node_t* dyn;            /**< n_dyn, in dyn_order */
+    rd_idx_t*      dyn_slot;       /**< n_nodes, node -> index into dyn, or -1 */
 
 } rd_chain_t;
 

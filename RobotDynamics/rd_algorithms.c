@@ -326,8 +326,9 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
     rd_real_t* a = state->accel;
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node   = d->node;
+        const rd_idx_t parent = d->danc;
         const rd_real_t* Td  = &state->T_dyn[node*16];
         const rd_real_t* v_i = &state->v[node*6];
 
@@ -344,15 +345,13 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
             rd_spatial_transform_motion_inv(Td, &a[parent*6], a_p);
         }
 
-        rd_int_t vi = algo_vel_index(chain, node);
-        rd_real_t a_joint = (vi >= 0 && qdd) ? qdd[vi] : RD_REAL(0.0);
+        rd_real_t a_joint = (d->vidx >= 0 && qdd) ? qdd[d->vidx] : RD_REAL(0.0);
 
         rd_real_t cor[6];
-        rd_spatial_cross_axis(v_i, chain->s_axis[node],
-                              chain->s_sign[node] * state->vj[node], cor);
+        rd_spatial_cross_axis(v_i, d->s_axis, d->s_sign * state->vj[node], cor);
 
         for (int k = 0; k < 6; ++k) a[node*6 + k] = a_p[k] + cor[k];
-        a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * a_joint;
+        a[node*6 + d->s_axis] += d->s_sign * a_joint;
     }
 
     /* A fixed link is rigidly attached to its moving ancestor, so its
@@ -403,8 +402,9 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
      * inertia rd_chain_build already folded into the moving node above them --
      * are never visited. */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node   = d->node;
+        const rd_idx_t parent = d->danc;
         const rd_real_t* Td  = &state->T_dyn[node*16];
 
         rd_real_t a_p[6];
@@ -419,24 +419,23 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
             rd_spatial_transform_motion_inv(Td, &a[parent*6], a_p);
         }
 
-        rd_int_t vi = algo_vel_index(chain, node);
-        rd_real_t a_joint = (vi >= 0 && qdd) ? qdd[vi] : RD_REAL(0.0);
+        rd_real_t a_joint = (d->vidx >= 0 && qdd) ? qdd[d->vidx] : RD_REAL(0.0);
 
         rd_real_t cor[6];
         if (use_velocity) {
-            rd_spatial_cross_axis(&state->v[node*6], chain->s_axis[node],
-                                  chain->s_sign[node] * state->vj[node], cor);
+            rd_spatial_cross_axis(&state->v[node*6], d->s_axis,
+                                  d->s_sign * state->vj[node], cor);
         } else {
             memset(cor, 0, 6*sizeof(rd_real_t));
         }
 
         for (int k = 0; k < 6; ++k) a[node*6 + k] = a_p[k] + cor[k];
-        a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * a_joint;
+        a[node*6 + d->s_axis] += d->s_sign * a_joint;
     }
 
     /* Inward: forces */
     for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
-        rd_idx_t node = chain->dyn_order[di];
+        rd_idx_t node = chain->dyn[di].node;
         rd_real_t* f_i = &f[node*6];
         const rd_real_t* I_i = &chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN];
 
@@ -467,10 +466,9 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
         for (int k = 0; k < 6; ++k) tau_out[k] = f[root*6 + k];
     }
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node = chain->dyn_order[di];
-        rd_int_t vi = algo_vel_index(chain, node);
-        if (vi < 0) continue;
-        tau_out[vi] = chain->s_sign[node] * f[node*6 + chain->s_axis[node]];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        if (d->vidx < 0) continue;
+        tau_out[d->vidx] = d->s_sign * f[d->node*6 + d->s_axis];
     }
     return RD_OK;
 }
@@ -516,7 +514,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     memset(M_out, 0, (size_t)nv * nv * sizeof(rd_real_t));
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node = chain->dyn_order[di];
+        rd_idx_t node = chain->dyn[di].node;
         memcpy(RD_IC(node), &chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
                RD_INERTIA_COMPACT_LEN * sizeof(rd_real_t));
     }
@@ -524,11 +522,10 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     /* Inward: composite inertia. Takes the child-in-parent transform directly,
      * so there is no inverse to form per node. */
     for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
-        if (parent != -1) {
-            rd_rbi_congruence_accum(&state->T_dyn[node*16],
-                                    RD_IC(node), RD_IC(parent));
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        if (d->danc != -1) {
+            rd_rbi_congruence_accum(&state->T_dyn[d->node*16],
+                                    RD_IC(d->node), RD_IC(d->danc));
         }
     }
 
@@ -538,8 +535,9 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     }
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node = chain->dyn_order[di];
-        rd_int_t col = algo_vel_index(chain, node);
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node = d->node;
+        const rd_int_t col = d->vidx;
         if (col < 0) continue;
 
         /*
@@ -548,22 +546,20 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
          * moves up in place: each step overwrites the frame it came from.
          */
         rd_real_t f_prop[6];
-        rd_rbi_col(RD_IC(node), chain->s_axis[node], chain->s_sign[node], f_prop);
-        M_out[col*nv + col] = chain->s_sign[node] * f_prop[chain->s_axis[node]];
+        rd_rbi_col(RD_IC(node), d->s_axis, d->s_sign, f_prop);
+        M_out[col*nv + col] = d->s_sign * f_prop[d->s_axis];
 
-        rd_idx_t curr = node;
+        const rd_dyn_node_t* dc = d;
         for (;;) {
-            rd_idx_t par = chain->dyn_parent[curr];
-            if (par == -1) break;
+            if (dc->danc == -1) break;
 
-            rd_spatial_transform_force_inplace(&state->T_dyn[curr*16], f_prop);
-            curr = par;
+            rd_spatial_transform_force_inplace(&state->T_dyn[dc->node*16], f_prop);
+            dc = &chain->dyn[chain->dyn_slot[dc->danc]];
 
-            rd_int_t par_col = algo_vel_index(chain, curr);
-            if (par_col >= 0) {
-                rd_real_t val = chain->s_sign[curr] * f_prop[chain->s_axis[curr]];
-                M_out[col*nv + par_col] = val;
-                M_out[par_col*nv + col] = val;
+            if (dc->vidx >= 0) {
+                rd_real_t val = dc->s_sign * f_prop[dc->s_axis];
+                M_out[col*nv + dc->vidx] = val;
+                M_out[dc->vidx*nv + col] = val;
             }
         }
 
@@ -606,14 +602,14 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
     /* --- Pass 1 (outward): bias forces and velocity-product accelerations -- */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node   = chain->dyn_order[di];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node = d->node;
         const rd_real_t* v_i = &state->v[node*6];
 
         rd_abi_from_rbi(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
                         RD_IA(node));
 
-        rd_spatial_cross_axis(v_i, chain->s_axis[node],
-                              chain->s_sign[node] * state->vj[node],
+        rd_spatial_cross_axis(v_i, d->s_axis, d->s_sign * state->vj[node],
                               &c[node*6]);
 
         rd_real_t Iv[6];
@@ -624,11 +620,12 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
     /* --- Pass 2 (inward): articulate the inertias -------------------------- */
     for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
-        const rd_int_t   sk = chain->s_axis[node];
-        const rd_real_t  sg = chain->s_sign[node];
-        rd_int_t vi = algo_vel_index(chain, node);
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node   = d->node;
+        const rd_idx_t parent = d->danc;
+        const rd_int_t   sk = d->s_axis;
+        const rd_real_t  sg = d->s_sign;
+        const rd_int_t vi = d->vidx;
 
         /*
          * The rank-1 downdate happens in place: IA[node] is dead once this
@@ -673,10 +670,11 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     algo_gravity_world(gravity, g_world);
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
-        rd_idx_t node   = chain->dyn_order[di];
-        rd_idx_t parent = chain->dyn_parent[node];
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        const rd_idx_t node   = d->node;
+        const rd_idx_t parent = d->danc;
         const rd_real_t* Td  = &state->T_dyn[node*16];
-        rd_int_t vi = algo_vel_index(chain, node);
+        const rd_int_t vi = d->vidx;
 
         /*
          * Acceleration inherited from the parent, in this link's frame, with
@@ -724,7 +722,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
             rd_real_t qddi = (u[node] - Ua) / D[node];
             qdd_out[vi] = qddi;
             memcpy(&a[node*6], a_p, 6*sizeof(rd_real_t));
-            a[node*6 + chain->s_axis[node]] += chain->s_sign[node] * qddi;
+            a[node*6 + d->s_axis] += d->s_sign * qddi;
         } else {
             memcpy(&a[node*6], a_p, 6*sizeof(rd_real_t));
         }
