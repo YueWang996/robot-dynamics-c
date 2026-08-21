@@ -81,6 +81,20 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
      * cannot change: a fixed link's pose in its nearest moving ancestor. After
      * this the per-tick loop below never has to look at a fixed link again. */
     if (!cached) {
+        /* A moving link whose parent is itself a dynamics node holds exactly
+         * its own offset composed with its joint rotation, and ten of that
+         * transform's sixteen floats do not depend on the angle: the axis
+         * column, the translation and the bottom row. Written here, so the
+         * per-tick loop stores six floats instead of sixteen. */
+        for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+            const rd_dyn_node_t* d = &chain->dyn[di];
+            if (d->s_axis < 3 || d->vidx < 0) continue;   /* revolute only */
+            if (d->danc != d->parent) continue;           /* no fixed link between */
+            if (d->parent == -1 && chain->has_floating_base) continue;
+            rd_mat4_joint_fixed(&chain->T_joint_offset[d->node*16], d->s_axis,
+                                &state->T_dyn[d->node*16]);
+        }
+
         for (rd_int_t ti = 0; ti < n; ++ti) {
             rd_idx_t node = chain->topo_order[ti];
             if (rd_chain_node_is_dynamic(chain, node)) continue;
@@ -130,9 +144,16 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 state_base_transform(q_base, T_base);
                 rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], T_pc);
             } else if (actuated && q_joints) {
-                rd_mat4_mul_joint(&chain->T_joint_offset[node*16],
-                                  d->s_axis, d->s_sign,
-                                  q_joints[d->jidx], T_pc);
+                const rd_real_t* RD_RESTRICT A = &chain->T_joint_offset[node*16];
+                if (under_dyn && d->s_axis >= 3) {
+                    /* The ten constant floats are already in place. */
+                    rd_real_t sn, cn;
+                    rd_sincos(q_joints[d->jidx], &sn, &cn);
+                    rd_mat4_joint_cols(A, d->s_axis, sn * d->s_sign, cn, T_pc);
+                } else {
+                    rd_mat4_mul_joint(A, d->s_axis, d->s_sign,
+                                      q_joints[d->jidx], T_pc);
+                }
             } else {
                 memcpy(T_pc, &chain->T_joint_offset[node*16],
                        16 * sizeof(rd_real_t));

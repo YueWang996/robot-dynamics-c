@@ -323,6 +323,48 @@ static RD_INLINE void rd_mat4_mul_joint(const rd_real_t* RD_RESTRICT A,
     C[12] = t0; C[13] = t1; C[14] = t2; C[15] = RD_REAL(1.0);
 }
 
+/*
+ * Only the two columns a revolute joint mixes, for a link whose T_dyn holds
+ * exactly A * Rk(q).
+ *
+ * The other ten floats of that transform are constants: the axis column and
+ * the translation come straight from the joint offset, and the bottom row is
+ * the bottom row. rd_update_kinematics() writes them once when it first sees
+ * the chain, so the per-tick store drops from sixteen floats to six and the
+ * six loads that fed them go away too.
+ */
+#define RD_JOINT_COLS_(I, J)                                                \
+    do {                                                                    \
+        for (int r_ = 0; r_ < 3; ++r_) {                                    \
+            const rd_real_t u_ = A[(I)*4+r_], w_ = A[(J)*4+r_];             \
+            C[(I)*4+r_] = c*u_ + s*w_;                                      \
+            C[(J)*4+r_] = c*w_ - s*u_;                                      \
+        }                                                                   \
+    } while (0)
+
+static RD_INLINE void rd_mat4_joint_cols(const rd_real_t* RD_RESTRICT A,
+                                         rd_int_t s_axis,
+                                         rd_real_t s, rd_real_t c,
+                                         rd_real_t* RD_RESTRICT C) {
+    switch (s_axis) {
+        case 3:  RD_JOINT_COLS_(1, 2); break;
+        case 4:  RD_JOINT_COLS_(2, 0); break;
+        default: RD_JOINT_COLS_(0, 1); break;
+    }
+}
+
+/** The constant ten of that transform: everything rd_mat4_joint_cols() leaves
+ *  alone. Written once per (chain, state) pairing. */
+static RD_INLINE void rd_mat4_joint_fixed(const rd_real_t* RD_RESTRICT A,
+                                          rd_int_t s_axis,
+                                          rd_real_t* RD_RESTRICT C) {
+    const rd_int_t k = s_axis - 3;
+    C[k*4+0] = A[k*4+0]; C[k*4+1] = A[k*4+1]; C[k*4+2] = A[k*4+2];
+    C[3] = C[7] = C[11] = RD_REAL(0.0);
+    C[12] = A[12]; C[13] = A[13]; C[14] = A[14]; C[15] = RD_REAL(1.0);
+}
+
+#undef RD_JOINT_COLS_
 #undef RD_JOINT_ROT_
 #undef RD_JOINT_TRANS_
 
