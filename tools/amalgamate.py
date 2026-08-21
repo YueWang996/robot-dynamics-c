@@ -162,27 +162,94 @@ ARM_FLAGS = ["-mcpu=cortex-m4", "-mthumb", "-mfpu=fpv4-sp-d16", "-mfloat-abi=har
              "-O3", "-std=gnu11", "-DRD_USE_SINGLE_PRECISION=1",
              "-DRD_MAX_LINKS=40", "-DRD_MAX_JOINTS=24"]
 
-INSN = re.compile(r"^\s*[0-9a-f]+:\t")     # the instruction's own address
+INSN = re.compile(r"^\s*([0-9a-f]+):\t")   # the instruction's own address
 ADDR = re.compile(r"\b[0-9a-f]{1,8} <")   # and any address it names
+WORD = re.compile(r"^\.word\t0x([0-9a-f]+)$")   # a jump table entry, or a constant
+RELOC = re.compile(r"^\s+([0-9a-f]+): (R_\S+)\s+(\S+)")   # what the linker will fill in
 
 
 def disassemble(objdump, *objects):
-    """{function: [instructions]} for every object given, addresses normalised."""
-    out, cur = {}, None
+    """
+    {function: [instructions]} for every object given, with everything that
+    depends on where the code landed expressed symbolically instead.
+
+    Three objects becoming one moves every function, so absolute addresses
+    differ for reasons that have nothing to do with the code. Three kinds of
+    address show up and each is handled on its own terms:
+
+    - Branch operands, which objdump already prints as <name+0xoff>.
+    - Anything the linker still has to fill in, which reads 0 in a .o and is
+      compared by its relocation's symbol instead. Whether a call leaves a
+      relocation behind is itself part of what is being checked.
+    - Jump tables, which the assembler has already resolved to section-relative
+      addresses. Those are named against the function they point into, so a
+      table pointing somewhere else is still a difference.
+
+    A .word that is none of those is a constant, and a change in one is a real
+    change, so it is left exactly as it is.
+    """
+    out = {}
     for obj in objects:
-        text = subprocess.run([objdump, "-d", "--no-show-raw-insn", str(obj)],
+        text = subprocess.run([objdump, "-dr", "--no-show-raw-insn", str(obj)],
                               capture_output=True, text=True, check=True).stdout
-        cur = None
+
+        # Pass one: where each function starts, its lines, and its relocations.
+        order, raw, fixups, cur = [], {}, {}, None
         for line in text.splitlines():
             if line.startswith("Disassembly") or "file format" in line:
                 cur = None
                 continue
             head = re.match(r"^[0-9a-f]+ <([^>]+)>:", line)
+            fix = RELOC.match(line)
             if head:
                 cur = head.group(1)
-                out[cur] = []
+                order.append((cur, int(line.split()[0], 16)))
+                raw[cur] = []
+            elif fix:
+                fixups[int(fix.group(1), 16)] = f"{fix.group(2)} {fix.group(3)}"
             elif cur and line.strip():
-                out[cur].append(ADDR.sub("<", INSN.sub("", line.rstrip())))
+                at = INSN.match(line)
+                raw[cur].append((int(at.group(1), 16) if at else None,
+                                 INSN.sub("", line.rstrip())))
+
+        # Pass two: the address ranges, so a .word can be named.
+        ends = {}
+        for i, (name, start) in enumerate(order):
+            last = [a for a, _ in raw[name] if a is not None]
+            ends[name] = (start, order[i + 1][1] if i + 1 < len(order)
+                          else (max(last) + 4 if last else start))
+
+        def jump_target(owner, value):
+            """
+            The label a jump table entry points at, or None if this .word is
+            not one. Two things have to hold: bit 0 set, because the entry is a
+            Thumb address, and the target inside the function that owns the
+            table, because that is where a switch branches. Without both, a
+            literal pool constant that happens to be small -- 0.0f is 0x0 --
+            reads as an address into whatever function starts the object.
+            """
+            if not value & 1:
+                return None
+            start, end = ends[owner]
+            addr = value & ~1
+            if start <= addr < end:
+                return f"<{owner}+{addr - start:#x}>"
+            return None
+
+        for name, lines in raw.items():
+            body = []
+            for at, txt in lines:
+                if at in fixups:
+                    # The value here is a placeholder; the symbol is the fact.
+                    txt = f"{txt.split(chr(9))[0]}\t[{fixups[at]}]"
+                else:
+                    word = WORD.match(txt)
+                    if word:
+                        target = jump_target(name, int(word.group(1), 16))
+                        if target:
+                            txt = f".word\t{target}"
+                body.append(ADDR.sub("<", txt))
+            out[name] = body
     return out
 
 
@@ -246,9 +313,12 @@ def verify(header_path):
         missing = sorted(set(many) - set(one))
         for f in differing[:5]:
             print(f"         {f} differs:")
-            for line in list(difflib.unified_diff(many[f], one[f], lineterm="", n=0))[:8]:
-                if not line.startswith(("---", "+++", "@@")):
-                    print("           ", line)
+            shown = [l for l in difflib.unified_diff(many[f], one[f], lineterm="", n=0)
+                     if not l.startswith(("---", "+++", "@@"))]
+            for line in shown[:20]:
+                print("           ", line)
+            if len(shown) > 20:
+                print(f"            ... {len(shown) - 20} more")
         if differing or missing:
             print(f"  [FAIL] Cortex-M4: {len(differing)} of {len(shared)} functions "
                   f"differ, {len(missing)} missing")
