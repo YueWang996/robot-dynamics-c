@@ -107,7 +107,10 @@ at 170 MHz:
 | `spatial_velocity` | 3.11 | 3.78 | 7.03 | 4.71 |
 
 `simple_arm`'s URDF carries no inertial data, so `rd_aba` correctly refuses it
-(`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only.
+(`RD_ERR_SINGULAR`) and its dynamics columns are traversal cost only. This
+table is the one capture that is a few changes behind — that board is away;
+the cross-core table below says by how much, and every other column in it is
+current.
 
 What that buys per control tick on the same part:
 

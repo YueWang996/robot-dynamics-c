@@ -81,7 +81,8 @@ put into BOOTSEL by hand after the first flash.
 To regenerate the tables in the top-level README:
 
 ```bash
-python3 tools/report.py benchmark/results/*.csv
+# codegen_*.csv is a head-to-head with a different schema; report.py skips it
+python3 tools/report.py benchmark/results/[!c]*.csv
 ```
 
 ## What the harness does
