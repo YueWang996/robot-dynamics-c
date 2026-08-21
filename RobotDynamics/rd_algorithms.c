@@ -14,22 +14,6 @@
  * Internal helpers
  * ============================================================================ */
 
-static RD_INLINE void algo_motion_transform(rd_int_t jtype, const rd_real_t axis[3],
-                                            rd_real_t q, rd_real_t T[16]) {
-    if (jtype == RD_JOINT_REVOLUTE) {
-        if (rd_mat4_axis_rotation(axis, q, T)) return;
-        rd_real_t R[9];
-        rd_rot_axis_angle(axis, q, R);
-        rd_real_t t0[3] = {RD_REAL(0.0), RD_REAL(0.0), RD_REAL(0.0)};
-        rd_rot_to_mat4(R, t0, T);
-    } else if (jtype == RD_JOINT_PRISMATIC) {
-        rd_real_t t[3] = {axis[0]*q, axis[1]*q, axis[2]*q};
-        rd_mat4_translate(t, T);
-    } else {
-        rd_mat4_identity(T);
-    }
-}
-
 /* out = A * [p]x, row-major 3x3. Each column is a cross product: 18 mults. */
 static RD_INLINE void algo_joint_velocity(const rd_chain_t* chain,
                                           const rd_state_t* state,
@@ -152,10 +136,8 @@ rd_status_t rd_fk_frame(const rd_chain_t* chain,
 
         rd_idx_t jidx = chain->joint_idx[node];
         if (jidx >= 0 && q_joints) {
-            rd_real_t Tm[16];
-            algo_motion_transform(chain->joint_type[node], &chain->axes[jidx*3],
-                                  q_joints[jidx], Tm);
-            rd_mat4_mul_se3(Ttmp1, Tm, T_out);
+            rd_mat4_mul_joint(Ttmp1, chain->s_axis[node], chain->s_sign[node],
+                              q_joints[jidx], T_out);
         } else {
             memcpy(T_out, Ttmp1, 16*sizeof(rd_real_t));
         }
