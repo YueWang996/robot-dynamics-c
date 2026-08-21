@@ -41,7 +41,6 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->joint_type = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
     chain->axes = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * nj * 3);
     chain->T_joint_offset = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * n * 16);
-    chain->T_link_offset = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * n * 16);
     chain->frame_names = (char**)RD_MALLOC(sizeof(char*) * n);
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
     chain->parent_path_len = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
@@ -59,7 +58,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     /* Check allocations */
     if (!chain->parent_list || !chain->topo_order || !chain->children_count ||
         !chain->children_list || !chain->joint_idx || !chain->joint_type ||
-        !chain->axes || !chain->T_joint_offset || !chain->T_link_offset ||
+        !chain->axes || !chain->T_joint_offset ||
         !chain->frame_names || !chain->parent_path || !chain->parent_path_len ||
         !chain->inertia_compact ||
         !chain->dyn_order || !chain->dyn_parent || !chain->dyn_child ||
@@ -102,7 +101,6 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
         rd_rot_to_mat4(R, t, &chain->T_joint_offset[i*16]);
         
         /* Link offset is identity */
-        rd_mat4_identity(&chain->T_link_offset[i*16]);
     }
 
     /* Build children lists */
@@ -312,14 +310,10 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
 
         for (rd_int_t i = 0; i < n; ++i) {
             rd_real_t acc[16], tmp[16];
-            rd_mat4_mul_se3(&chain->T_joint_offset[i*16],
-                            &chain->T_link_offset[i*16], acc);
+            memcpy(acc, &chain->T_joint_offset[i*16], 16 * sizeof(rd_real_t));
             rd_idx_t p = chain->parent_list[i];
             while (p != -1 && !rd_chain_node_is_dynamic(chain, p)) {
-                rd_real_t up[16];
-                rd_mat4_mul_se3(&chain->T_joint_offset[p*16],
-                                &chain->T_link_offset[p*16], up);
-                rd_mat4_mul_se3(up, acc, tmp);
+                rd_mat4_mul_se3(&chain->T_joint_offset[p*16], acc, tmp);
                 memcpy(acc, tmp, 16 * sizeof(rd_real_t));
                 p = chain->parent_list[p];
             }
@@ -375,7 +369,6 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->joint_type);
     RD_FREE(chain->axes);
     RD_FREE(chain->T_joint_offset);
-    RD_FREE(chain->T_link_offset);
     
     if (chain->frame_names) {
         for (rd_int_t i = 0; i < chain->n_nodes; ++i) {

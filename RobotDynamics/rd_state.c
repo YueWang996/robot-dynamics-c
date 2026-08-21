@@ -97,102 +97,104 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
      * one-time call and nothing in the API invites that. */
     const int cached = (state->cached_for == (const void*)chain);
 
-    for (rd_int_t ti = 0; ti < n; ++ti) {
-        rd_idx_t node   = chain->topo_order[ti];
+    /* Cold pass, once per (chain, state) pairing: everything the configuration
+     * cannot change. S for every node, and for a fixed link its pose in the
+     * nearest moving ancestor, which is a constant. After this the per-tick
+     * loop below never has to look at a fixed link again. */
+    if (!cached) {
+        for (rd_int_t ti = 0; ti < n; ++ti) {
+            rd_idx_t node  = chain->topo_order[ti];
+            rd_idx_t jidx  = chain->joint_idx[node];
+            rd_int_t jtype = chain->joint_type[node];
+            rd_real_t* S_i = &state->S[node*6];
+
+            if ((jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
+                                jtype == RD_JOINT_PRISMATIC)) {
+                /* The link frame is the joint's child frame, so the motion
+                 * subspace is the joint twist itself. */
+                const rd_real_t* axis = &chain->axes[jidx*3];
+                memset(S_i, 0, 6*sizeof(rd_real_t));
+                if (jtype == RD_JOINT_REVOLUTE) {
+                    S_i[3] = axis[0]; S_i[4] = axis[1]; S_i[5] = axis[2];
+                } else {
+                    S_i[0] = axis[0]; S_i[1] = axis[1]; S_i[2] = axis[2];
+                }
+            } else {
+                memset(S_i, 0, 6*sizeof(rd_real_t));
+                state->vj[node] = RD_REAL(0.0);
+            }
+
+            if (rd_chain_node_is_dynamic(chain, node)) continue;
+
+            /* A fixed link contributes only its joint offset, composed through
+             * any fixed links between it and its moving ancestor. */
+            rd_idx_t parent = chain->parent_list[node];
+            rd_real_t* Td = &state->T_dyn[node*16];
+            if (rd_chain_node_is_dynamic(chain, parent)) {
+                memcpy(Td, &chain->T_joint_offset[node*16],
+                       16 * sizeof(rd_real_t));
+            } else {
+                rd_mat4_mul_se3(&state->T_dyn[parent*16],
+                                &chain->T_joint_offset[node*16], Td);
+            }
+        }
+    }
+
+    /* Per tick: only the nodes that can move. */
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_idx_t node   = chain->dyn_order[di];
         rd_idx_t parent = chain->parent_list[node];
+        rd_idx_t danc   = chain->dyn_parent[node];
         rd_idx_t jidx   = chain->joint_idx[node];
         rd_int_t jtype  = chain->joint_type[node];
 
         const int root_fb  = (parent == -1 && chain->has_floating_base);
         const int actuated = (jidx >= 0) && (jtype == RD_JOINT_REVOLUTE ||
                                              jtype == RD_JOINT_PRISMATIC);
-        /* Nothing the configuration carries can move this node in its parent. */
-        const int immovable = !root_fb && !actuated;
+        rd_real_t* Td  = &state->T_dyn[node*16];
+        const rd_real_t* S_i = &state->S[node*6];
 
-        rd_real_t* Td   = &state->T_dyn[node*16];
-        rd_real_t* S_i  = &state->S[node*6];
-
-        /* Built straight into T_dyn when the parent can move, because then the
-         * two are the same transform and a copy would be pure waste. */
-        const int under_dyn = (parent == -1) ||
-                              rd_chain_node_is_dynamic(chain, parent);
+        /* Built straight into T_dyn when the parent is itself a dynamics node,
+         * because then the two are the same transform. That is exactly when
+         * the moving ancestor and the parent coincide. */
+        const int under_dyn = (danc == parent);
 
         /* 1. Pose in the nearest moving ancestor */
-        if (!immovable || !cached) {
-            rd_real_t T_local[16], Ttmp[16];
+        {
+            rd_real_t T_local[16];
             rd_real_t* T_pc = under_dyn ? Td : T_local;
 
             if (root_fb) {
-                /* The root's "joint" is the 6-DOF base pose. It composes ahead
-                 * of the link's own offsets, which is the order rd_fk_frame()
-                 * uses when it seeds its accumulator with the base transform. */
+                /* The root's "joint" is the 6-DOF base pose, composing ahead of
+                 * the link's own offset -- the order rd_fk_frame() uses when it
+                 * seeds its accumulator with the base transform. */
                 rd_real_t T_base[16];
                 state_base_transform(q_base, T_base);
-                rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], Ttmp);
-                rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
+                rd_mat4_mul_se3(T_base, &chain->T_joint_offset[node*16], T_pc);
             } else if (actuated && q_joints) {
                 rd_real_t T_motion[16];
                 state_motion_transform(jtype, &chain->axes[jidx*3],
                                        q_joints[jidx], T_motion);
-                rd_mat4_mul_se3(&chain->T_joint_offset[node*16], T_motion, Ttmp);
-                rd_mat4_mul_se3(Ttmp, &chain->T_link_offset[node*16], T_pc);
+                rd_mat4_mul_se3(&chain->T_joint_offset[node*16], T_motion, T_pc);
             } else {
-                /* The joint contributes identity -- because it is fixed, or
-                 * because no configuration was supplied. */
-                rd_mat4_mul_se3(&chain->T_joint_offset[node*16],
-                                &chain->T_link_offset[node*16], T_pc);
+                memcpy(T_pc, &chain->T_joint_offset[node*16],
+                       16 * sizeof(rd_real_t));
             }
             if (!under_dyn) {
                 rd_mat4_mul_se3(&state->T_dyn[parent*16], T_pc, Td);
             }
         }
 
-        /* 2. Joint motion subspace -- axis and link offset only, so it is
-         *    the same on every tick. */
-        if (!cached) {
-            if (actuated) {
-                const rd_real_t* axis = &chain->axes[jidx*3];
-                rd_real_t twist[6] = {0};
-                if (jtype == RD_JOINT_REVOLUTE) {
-                    twist[3] = axis[0]; twist[4] = axis[1]; twist[5] = axis[2];
-                } else {
-                    twist[0] = axis[0]; twist[1] = axis[1]; twist[2] = axis[2];
-                }
-                rd_spatial_transform_motion(&chain->T_link_offset[node*16],
-                                            twist, S_i);
-            } else {
-                memset(S_i, 0, 6*sizeof(rd_real_t));
-                state->vj[node] = RD_REAL(0.0);
-            }
-        }
-
-        /* Nothing below changes for a *fixed link*: its pose and velocity
-         * relative to the nearest moving ancestor are the constants just
-         * cached, and the world-frame values are one transform
-         * away. rd_forward_kinematics(), rd_spatial_velocity(),
-         * rd_jacobian() and rd_spatial_acceleration() do that transform when
-         * asked, which is cheaper than doing it here for every fixed link on
-         * every tick when most are never queried.
-         *
-         * The root of a fixed-base model is immovable but is still a dynamics
-         * node, and everything else is expressed relative to it, so it does
-         * not take this exit. */
-        if (immovable && !rd_chain_node_is_dynamic(chain, node)) continue;
-
         rd_real_t v_joint = (actuated && qd) ? qd[base_dof + jidx] : RD_REAL(0.0);
         state->vj[node] = v_joint;
 
-        /* 3. Pose in the world, reached through the nearest moving ancestor
-         *    rather than the immediate parent: one compose either way, and
-         *    this way the fixed links in between need not be visited. */
+        /* 2. Pose in the world, through the moving ancestor rather than the
+         *    immediate parent, so the fixed links between need no visit. */
         rd_real_t* Tw = &state->T_world[node*16];
-        {
-            rd_idx_t danc = chain->dyn_parent[node];
-            if (danc == -1) memcpy(Tw, Td, 16*sizeof(rd_real_t));
-            else rd_mat4_mul_se3(&state->T_world[danc*16], Td, Tw);
-        }
+        if (danc == -1) memcpy(Tw, Td, 16*sizeof(rd_real_t));
+        else rd_mat4_mul_se3(&state->T_world[danc*16], Td, Tw);
 
-        /* 4. Spatial velocity, in this link's body frame */
+        /* 3. Spatial velocity, in this link's body frame */
         rd_real_t* v_i = &state->v[node*6];
         if (parent == -1) {
             if (chain->has_floating_base && qd) {
@@ -201,10 +203,7 @@ rd_status_t rd_update_kinematics(const rd_chain_t* chain,
                 memset(v_i, 0, 6*sizeof(rd_real_t));
             }
         } else {
-            /* Inherited from the nearest moving ancestor, for the same reason
-             * as the pose above. */
-            rd_spatial_transform_motion_inv(Td, &state->v[chain->dyn_parent[node]*6],
-                                            v_i);
+            rd_spatial_transform_motion_inv(Td, &state->v[danc*6], v_i);
             if (actuated) {
                 for (int kk = 0; kk < 6; ++kk) v_i[kk] += S_i[kk] * v_joint;
             }

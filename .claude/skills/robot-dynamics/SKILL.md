@@ -172,8 +172,8 @@ Control-loop budgets (Arm core, Go2): torque `update + rnea` 280 µs (3.6 kHz),
 operational space `+ crba` 515 µs (1.9 kHz), forward dynamics `update + aba`
 555 µs (1.8 kHz).
 
-On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 169 µs
-(5.9 kHz) for torque and 282 µs (3.5 kHz) for operational space. The two M4F parts
+On an **STM32G474 (Cortex-M4F) at 170 MHz** the same Go2 tick costs 140 µs
+(7.2 kHz) for torque and 253 µs (4.0 kHz) for operational space. The two M4F parts
 agree within 4% on cycles per call (median 0.98×), so **scale any other
 Cortex-M4F from these by clock** and expect to be close. The M4F needs 1.1–2.2×
 the M33's cycles for this workload, and running from flash costs another ~17%.
@@ -205,7 +205,11 @@ and the Jacobians are unaffected by anything done to it. Two facts follow:
   never from `state->T_world` directly** — for a fixed link that slot is not
   maintained. If a user reports it recomputing every tick, check
   they are not re-initialising the state each loop: that throws the cache away.
-- **libm is worth ~9% of it**, no more. `RD_FAST_TRIG=1` buys 5–6% of a tick.
+- **There is no separate link offset.** The link frame *is* the joint's child
+  frame, so the motion subspace is the joint twist itself and `rd_axis_t` can
+  only hold ±X/±Y/±Z. Anything assuming a link-offset transform is out of date.
+- **libm is worth ~12% of `update_kinematics`**, and `RD_FAST_TRIG` is on by
+  default now.
   Flash wait states cost `update_kinematics` ~50% on Cortex-M4F against 2% for
   `rnea`, but that is code footprint missing in the instruction cache, not the
   libm calls — removing them recovers only ~13% of the penalty.
@@ -242,7 +246,7 @@ around.
 |---|---|---|
 | `RD_SINGLE_PRECISION` | ON | `float` vs `double` for `rd_real_t` |
 | `RD_CMSIS_DSP` | OFF | needs `RD_CMSIS_DSP_INCLUDE_DIR`. Do not use it for trig — its table lookup is slower *and* 285x less accurate than `RD_FAST_TRIG` |
-| `RD_FAST_TRIG` | OFF | polynomial `sin`/`cos`, 4.8x faster than libm at the same float32 accuracy. Passes the Pinocchio comparison; validate with `--cflag=-DRD_FAST_TRIG=1` |
+| `RD_FAST_TRIG` | **ON** | polynomial `sin`/`cos`, 4.8x faster than libm at the same float32 accuracy. Set to 0 for libm's; both pass the Pinocchio comparison |
 | `RD_STATIC_ALLOC` | OFF | see constraints |
 | `RD_OPTIMIZE_SIZE` | OFF | `-Os` vs `-O3 -ffast-math` |
 

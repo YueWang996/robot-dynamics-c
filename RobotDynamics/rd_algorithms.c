@@ -145,7 +145,7 @@ rd_status_t rd_fk_frame(const rd_chain_t* chain,
 
     rd_int_t plen = chain->parent_path_len[frame_id];
     const rd_idx_t* path = &chain->parent_path[frame_id * chain->n_nodes];
-    rd_real_t Ttmp1[16], Ttmp2[16];
+    rd_real_t Ttmp1[16];
 
     for (rd_int_t pi = 0; pi < plen; ++pi) {
         rd_idx_t node = path[pi];
@@ -156,11 +156,10 @@ rd_status_t rd_fk_frame(const rd_chain_t* chain,
             rd_real_t Tm[16];
             algo_motion_transform(chain->joint_type[node], &chain->axes[jidx*3],
                                   q_joints[jidx], Tm);
-            rd_mat4_mul_se3(Ttmp1, Tm, Ttmp2);
+            rd_mat4_mul_se3(Ttmp1, Tm, T_out);
         } else {
-            memcpy(Ttmp2, Ttmp1, 16*sizeof(rd_real_t));
+            memcpy(T_out, Ttmp1, 16*sizeof(rd_real_t));
         }
-        rd_mat4_mul_se3(Ttmp2, &chain->T_link_offset[node*16], T_out);
     }
     return RD_OK;
 }

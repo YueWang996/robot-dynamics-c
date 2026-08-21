@@ -42,9 +42,12 @@ typedef struct {
     /* Joint axes (n_joints x 3) */
     rd_real_t* axes;               /**< Row-major, size n_joints*3 */
 
-    /* Transforms (4x4, column-major) */
+    /* Transforms (4x4, column-major). There is deliberately no separate link
+     * offset: the link frame is the joint's child frame, so one would always be
+     * the identity, and composing against it cost a 4x4 multiply per node per
+     * tick. Reintroducing the distinction means changing this struct, not
+     * multiplying by ones. */
     rd_real_t* T_joint_offset;     /**< Joint offset transforms (n_nodes * 16) */
-    rd_real_t* T_link_offset;      /**< Link offset transforms (n_nodes * 16) */
 
     /* Frame names */
     char** frame_names;            /**< Frame name for each node */

@@ -111,12 +111,12 @@ Go2 (18 DOF, 31 links) across the five cores measured so far, µs per call:
 | | M33 @ 150<br><sub>RP2350</sub> | M4F @ 170<br><sub>G474</sub> | M4F @ 80<br><sub>L413</sub> | Hazard3 @ 150<br><sub>RP2350</sub> | RV32 @ 160<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | **FPU** | **FPU** | **FPU** | *no FPU* | *no FPU* |
-| `update_kinematics` | 155.2 | **108.1** | 489.5 | 1458.8 | 1495.0 |
-| `rnea` | 125.0 | **61.1** | 270.7 | 1650.3 | 2324.4 |
-| `crba` | 234.4 | **113.7** | 971.5 | 2293.0 | 3627.7 |
-| `aba` | 399.6 | **203.2** | 1299.5 | 4239.1 | 6243.3 |
-| torque tick | 280 µs<br>3.6 kHz | **168 µs<br>6.0 kHz** | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
-| operational space | 515 µs<br>1.9 kHz | **282 µs<br>3.5 kHz** | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
+| `update_kinematics` | 155.2 | **78.8** | 489.5 | 1458.8 | 1495.0 |
+| `rnea` | 125.0 | **60.9** | 270.7 | 1650.3 | 2324.4 |
+| `crba` | 234.4 | **113.5** | 971.5 | 2293.0 | 3627.7 |
+| `aba` | 399.6 | **202.9** | 1299.5 | 4239.1 | 6243.3 |
+| torque tick | 280 µs<br>3.6 kHz | **140 µs<br>7.2 kHz** | 567 µs<br>1.8 kHz | 3109 µs<br>322 Hz | 3819 µs<br>262 Hz |
+| operational space | 515 µs<br>1.9 kHz | **253 µs<br>3.9 kHz** | 1732 µs<br>577 Hz | — | 7447 µs<br>134 Hz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`.
 
@@ -183,7 +183,7 @@ target_link_libraries(my_firmware PRIVATE robot_dynamics)
 |---|---|---|
 | `RD_SINGLE_PRECISION` | `ON` | `float` rather than `double` for `rd_real_t` |
 | `RD_CMSIS_DSP` | `OFF` | Use CMSIS-DSP for `sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR`. Not for trigonometry — its table lookup is slower than `RD_FAST_TRIG` and 285× less accurate |
-| `RD_FAST_TRIG` | `OFF` | Polynomial `sin`/`cos`: 57 cycles per pair against libm's 274 on Cortex-M4F, same float32 accuracy. Worth 5–6% of a torque tick |
+| `RD_FAST_TRIG` | `ON` | Polynomial `sin`/`cos`: 57 cycles per pair against libm's 274 on Cortex-M4F, at the same float32 accuracy. Turn off for libm's |
 | `RD_STATIC_ALLOC` | `OFF` | No `malloc` (see limitations) |
 | `RD_OPTIMIZE_SIZE` | `OFF` | `-Os` rather than `-O3 -ffast-math` |
 | `RD_ENABLE_DEBUG` | `OFF` | Assertion and log output |
