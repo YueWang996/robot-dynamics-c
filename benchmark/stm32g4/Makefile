@@ -71,9 +71,20 @@ ifeq ($(CCMBENCH),1)
   CFLAGS += -DBENCH_G4_CCM=1
 endif
 
+# CODEGEN=1 swaps the suite for the head-to-head against Pinocchio's
+# code-generated dynamics. See ../codegen/README.md; the generated sources have
+# to be produced first, they are not in the repository.
+ifeq ($(CODEGEN),1)
+  CG    := $(BENCH)/codegen
+  CFLAGS += -I$(CG)/generated
+  SRCS  := main.c startup_glue.c \
+           $(CG)/bench_codegen.c $(wildcard $(CG)/generated/*.c) \
+           $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+else
 SRCS := main.c startup_glue.c \
         $(BENCH)/bench_main.c \
         $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+endif
 ASRC := $(DEV)/Source/Templates/gcc/startup_stm32g474xx.s
 
 all: rd_bench.elf

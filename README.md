@@ -179,6 +179,71 @@ and h, which an operational-space controller wants anyway. The benchmark's
 `fd_crba` row against `aba` is exactly this comparison, so you can run it on
 your own model.
 
+### How it gets this fast
+
+Nothing here is a trick, and nothing trades accuracy for speed — every number
+above passes the same Pinocchio comparison. The gains come from noticing what
+the general form of an algorithm is spending time rediscovering, and from
+measuring on the actual part rather than reasoning about it.
+
+**Say less, and the arithmetic collapses.** `rd_axis_t` can only hold ±X, ±Y or
+±Z, and the link frame *is* the joint's child frame. So the motion subspace is
+always a unit spatial axis. Every `I·S` becomes a column read instead of a
+matrix-vector product; every `v × S` is four multiplies instead of 24; every
+Jacobian column is nine instead of 24. A joint's own transform is never built
+at all — composing straight through its parent's offset is 12 multiplies where
+forming the 4×4 and running a general SE(3) multiply is 36 plus 20 stores. None
+of this needs a test at run time, because the type cannot express anything else.
+
+**Store what the algorithm actually is.** A sum of rigid-body inertias is a
+rigid body, so CRBA's composite lives in ten numbers, not a 6×6. ABA's
+articulated inertia stops being a rigid body after the rank-1 downdate but
+stays symmetric, so 21 numbers, not 36. Both exact.
+
+**A real robot is mostly frames that cannot move** — feet, sensor mounts,
+inertial frames; Go2 is 18 of 31 links. Each one's inertia is folded into its
+nearest moving ancestor when the chain is built, and the dynamics traverse only
+the moving nodes. World poses are not cached at all: none of RNEA, CRBA or ABA
+reads one, so a control tick was paying a 4×4 compose per link for the frame
+queries' benefit. Those compose the frames they are asked about instead.
+
+**Write only what changed.** For a moving link whose parent also moves, ten of
+its 4×4's sixteen floats do not depend on the joint angle — the axis column
+passes through, the translation is the offset's, the bottom row is the bottom
+row. They are written once, when the state first meets the chain.
+
+**Nothing allocates, ever.** One caller-provided buffer holds the whole tick:
+85 floats per link, and no `malloc` anywhere in the library.
+
+Then there is a category that only shows up on the hardware:
+
+**Run-time subscripts cost far more than their arithmetic.** `vldr` and `vstr`
+take an immediate offset and nothing else, so indexing a matrix column by a
+run-time axis needs one live base register per column touched — and in these
+loops there are none spare, so the compiler computes the addresses, spills them
+and reloads each one before its float. Switching on the axis so the subscripts
+are compile-time constants removed 17 integer instructions per link and was
+worth 22% of `update_kinematics`. The same effect explains a failure: a
+congruence rewritten to use 24 multiplies instead of 45, indexed by a run-time
+axis, came out **29% slower**. Forty-five multiplies in registers beat 24
+through memory.
+
+**libc is not free.** Every algorithm clears its output first, and the size is
+only known at run time, so the compiler cannot inline the clear and calls
+whatever libc is linked. newlib-nano's `memset` — what `--specs=nano.specs`
+selects, and what STM32CubeIDE ships by default — is a byte-at-a-time loop.
+Clearing Go2's 18×18 mass matrix through it cost 9,039 cycles, **half of
+CRBA**. A typed store loop does not care which libc the caller links.
+
+**The compiler is usually right, and it is worth checking which times it is
+not.** At zero flash wait states this code issues about one instruction per
+cycle: GCC already interleaves the independent FMA chains and spills 14 of 95
+memory operations in the largest kernel, so there are no pipeline stalls left
+for hand-written assembly to remove. Roughly a third of the ideas tried this
+way lost — global `-O2` (38% slower), linking to RAM, a branch to skip
+redundant work (15% slower), rolling the Cholesky onto pointers. They were
+reverted, and the ones that stayed were kept because a board said so.
+
 ### Where the remaining time goes
 
 At 170 MHz the G474's flash needs four wait states, and the ART accelerator's
