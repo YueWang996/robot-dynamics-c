@@ -214,7 +214,7 @@ rd_status_t rd_jacobian(const rd_chain_t* chain,
     if (frame_id < 0 || frame_id >= chain->n_nodes) return RD_ERR_INVALID_INDEX;
 
     const rd_int_t nv = rd_chain_get_nv(chain);
-    memset(J_out, 0, 6 * (size_t)nv * sizeof(rd_real_t));
+    rd_zero(J_out, 6 * nv);
 
     /* Base columns: a unit twist in the root body frame, mapped to the world.
      * The root's pose in its nearest moving ancestor is its pose in the world. */
@@ -396,7 +396,7 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
     rd_real_t g_world[6];
     algo_gravity_world(gravity, g_world);
 
-    memset(tau_out, 0, (size_t)nv * sizeof(rd_real_t));
+    rd_zero(tau_out, nv);
 
     /* Outward: accelerations. Over the dynamics tree, so fixed links -- whose
      * inertia rd_chain_build already folded into the moving node above them --
@@ -511,7 +511,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     rd_real_t* Ic = state->inertia;
     #define RD_IC(n) (&Ic[(n) * RD_INERTIA_COMPACT_LEN])
 
-    memset(M_out, 0, (size_t)nv * nv * sizeof(rd_real_t));
+    rd_zero(M_out, nv * nv);
 
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
         rd_idx_t node = chain->dyn[di].node;
@@ -598,7 +598,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     rd_real_t* u  = state->u;
     rd_real_t* a  = state->accel;
 
-    memset(qdd_out, 0, (size_t)nv * sizeof(rd_real_t));
+    rd_zero(qdd_out, nv);
 
     /* --- Pass 1 (outward): bias forces and velocity-product accelerations -- */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {

@@ -104,6 +104,28 @@ static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
 }
 #endif
 
+/*
+ * Clear an array of rd_real_t.
+ *
+ * Deliberately not memset. The output buffers the algorithms clear -- a mass
+ * matrix, a Jacobian, a torque vector -- have a size that is only known at run
+ * time, so the compiler cannot inline the clear and has to call whatever libc
+ * is linked. newlib-nano's memset, which is what --specs=nano.specs selects and
+ * what STM32CubeIDE ships by default, is a byte-at-a-time loop: four
+ * instructions per byte, so Go2's 18x18 mass matrix costs five thousand of
+ * them. A typed loop is one store per element and does not depend on which
+ * libc the caller happens to link.
+ */
+static RD_INLINE void rd_zero(rd_real_t* RD_RESTRICT p, rd_int_t n) {
+    /* The zero arrives through a volatile read so the compiler cannot prove
+     * the loop stores a constant byte pattern. Without that,
+     * -ftree-loop-distribute-patterns recognises the idiom and turns this
+     * straight back into the memset call it exists to avoid. */
+    volatile rd_real_t vz = RD_REAL(0.0);
+    const rd_real_t z = vz;
+    for (rd_int_t i = 0; i < n; ++i) p[i] = z;
+}
+
 /* ============================================================================
  * 2. 3x3 Matrix Operations (Rotation & Vector)
  * ============================================================================ */
