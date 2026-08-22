@@ -41,7 +41,7 @@ target_compile_definitions(rd_benchmark PRIVATE
     RD_USE_CMSIS_DSP=0
     RD_USE_STATIC_ALLOC=0
     RD_MAX_LINKS=40
-    RD_MAX_JOINTS=24
+    RD_MAX_JOINTS=32
 )
 
 # Identical optimisation settings on both architectures so the comparison

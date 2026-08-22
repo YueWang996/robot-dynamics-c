@@ -36,6 +36,7 @@
 #include "models/model_spine.h"
 #include "models/model_xarm7.h"
 #include "models/model_go2.h"
+#include "models/model_g1.h"
 
 /* ========================================================================== */
 /* Tunables                                                                   */
@@ -46,10 +47,10 @@
 #define REPEATS               5
 
 #ifndef BENCH_MAX_NODES
-#define BENCH_MAX_NODES       40
+#define BENCH_MAX_NODES       40   /* g1: 40 */
 #endif
 #ifndef BENCH_MAX_NV
-#define BENCH_MAX_NV          32
+#define BENCH_MAX_NV          40   /* g1: 35 */
 #endif
 
 /* ========================================================================== */
@@ -300,6 +301,7 @@ static const bench_robot_t g_robots[] = {
     { "spine",      spine_model_get,      "bard/tests/spine.urdf" },
     { "xarm7",      xarm7_model_get,      "bard/examples/.../xarm7.urdf" },
     { "go2",        go2_model_get,        "bard/examples/.../go2.urdf" },
+    { "g1",         g1_model_get,         "unitree_ros/.../g1_29dof.urdf" },
 };
 
 #define N_ROBOTS ((int)(sizeof(g_robots) / sizeof(g_robots[0])))

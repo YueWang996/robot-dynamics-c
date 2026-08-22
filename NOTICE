@@ -23,3 +23,7 @@ which is MIT licensed. Those URDFs originate from their respective vendors:
 
   go2_description    Unitree Robotics
   xarm_description   UFACTORY
+
+model_g1.h is generated the same way from g1_29dof.urdf in unitree_ros
+(https://github.com/unitreerobotics/unitree_ros), which is BSD-3-Clause.
+That URDF is not redistributed here; only the model derived from it.

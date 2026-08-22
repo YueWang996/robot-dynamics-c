@@ -36,7 +36,7 @@ CPU    := -mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard
 CFLAGS := $(CPU) -O3 -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
           -ffunction-sections -fdata-sections \
           -DBENCH_STM32L4=1 -DBENCH_NO_MAIN=1 \
-          -DRD_USE_SINGLE_PRECISION=1 -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=24 \
+          -DRD_USE_SINGLE_PRECISION=1 -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=32 \
           -I$(CUBE)/Drivers/CMSIS/Include -I$(RD) -I$(BENCH) -I.
 
 ifeq ($(PLL80),1)

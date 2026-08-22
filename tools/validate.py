@@ -31,6 +31,9 @@ import tempfile
 import numpy as np
 import pinocchio as pin
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import urdf2c
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
@@ -40,6 +43,9 @@ ROBOTS = {
     "spine":      ("tests/spine.urdf", True),
     "xarm7":      ("examples/example_robots/xarm_description/urdf/xarm7.urdf", False),
     "go2":        ("examples/example_robots/go2_description/urdf/go2.urdf", True),
+    # Unitree G1, 29 DOF. From unitreerobotics/unitree_ros (BSD-3-Clause);
+    # drop g1_29dof.urdf in beside the others and this row starts running.
+    "g1":         ("examples/example_robots/g1_description/g1_29dof.urdf", True),
 }
 
 
@@ -51,7 +57,7 @@ def build(double: bool, extra: list | None = None) -> str:
         "cc", "-O2", "-std=c11", "-g",
         *(extra or []),
         f"-DRD_USE_SINGLE_PRECISION={0 if double else 1}",
-        "-DRD_MAX_LINKS=40", "-DRD_MAX_JOINTS=24",
+        "-DRD_MAX_LINKS=48", "-DRD_MAX_JOINTS=32",
         "-I", os.path.join(ROOT, "RobotDynamics"),
         "-I", os.path.join(ROOT, "benchmark", "models"),
         os.path.join(HERE, "validate_dump.c"),
@@ -111,7 +117,27 @@ def payload_for(cfg, floating):
     return " ".join(repr(float(x)) for x in parts) + "\n"
 
 
-def pin_quantities(model, data, cfg, floating, link_names, eef_name):
+def frame_map(urdf_path, model):
+    """
+    C link name -> pinocchio frame name.
+
+    urdf2c truncates link names to the fifteen characters rd_link_t holds, so a
+    humanoid's `right_shoulder_pitch_link` reaches the C side shortened, and
+    where two links collide at fifteen characters it appends an ordinal. The
+    mapping is recovered by replaying that same shortening over the same URDF
+    with urdf2c's own code, which makes it exact rather than a guess.
+    """
+    links = urdf2c.load_urdf(urdf_path)
+    order = urdf2c.topo_sort(links)
+    used, out = set(), {}
+    for full in order:
+        short = urdf2c.cname(full, used)
+        if model.existFrame(full):
+            out[short] = full
+    return out
+
+
+def pin_quantities(model, data, cfg, floating, link_names, eef_name, resolved):
     nj = len(cfg["q"])
     if floating:
         w, x, y, z = cfg["quat_wxyz"]
@@ -126,9 +152,9 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name):
     T = {}
     V = {}
     for name in link_names:
-        if not model.existFrame(name):
+        if name not in resolved:
             continue
-        fid = model.getFrameId(name)
+        fid = model.getFrameId(resolved[name])
         T[name] = data.oMf[fid].homogeneous
         V[name] = pin.getFrameVelocity(model, data, fid, pin.ReferenceFrame.WORLD).vector
 
@@ -136,7 +162,7 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name):
     M = pin.crba(model, data, q)
     M = np.triu(M) + np.triu(M, 1).T          # Pinocchio fills the upper triangle
 
-    fid = model.getFrameId(eef_name)
+    fid = model.getFrameId(resolved.get(eef_name, eef_name))
     JW = pin.computeFrameJacobian(model, data, q, fid, pin.ReferenceFrame.WORLD)
     JL = pin.computeFrameJacobian(model, data, q, fid, pin.ReferenceFrame.LOCAL)
 
@@ -199,6 +225,7 @@ def main():
         n, nj, nv, fb = d0["shape"]
         link_names = [d0["NAME"][i] for i in range(n)]
         eef_name = d0["NAME"][d0["eef"]]
+        resolved = frame_map(urdf, model)
 
         if nv != model.nv:
             print(f"{robot}: nv mismatch  C={nv}  pinocchio={model.nv}")
@@ -212,7 +239,8 @@ def main():
         for s in range(args.samples):
             cfg = make_config(rng, nj, floating)
             d = run_dump(binary, robot, payload_for(cfg, floating))
-            ref = pin_quantities(model, data, cfg, floating, link_names, eef_name)
+            ref = pin_quantities(model, data, cfg, floating, link_names, eef_name,
+                                 resolved)
 
             for i, name in enumerate(link_names):
                 if name not in ref["T"]:

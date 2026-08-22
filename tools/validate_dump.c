@@ -25,9 +25,10 @@
 #include "model_spine.h"
 #include "model_xarm7.h"
 #include "model_go2.h"
+#include "model_g1.h"
 
-#define MAXNV 32
-#define MAXN  40
+#define MAXNV 40
+#define MAXN  48
 
 static rd_chain_t chain;
 static rd_state_t state;
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[1], "spine"))      model = spine_model_get();
     else if (!strcmp(argv[1], "xarm7"))      model = xarm7_model_get();
     else if (!strcmp(argv[1], "go2"))        model = go2_model_get();
+    else if (!strcmp(argv[1], "g1"))         model = g1_model_get();
     else { fprintf(stderr, "unknown robot %s\n", argv[1]); return 2; }
 
     memset(&chain, 0, sizeof(chain));

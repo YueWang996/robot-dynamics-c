@@ -160,22 +160,27 @@ without it.
 
 STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
-| | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) |
-|---|---|---|---|
-| `update_kinematics` | 10.4 | 17.9 | 26.9 |
-| `rnea` | 17.5 | 30.4 | 48.6 |
-| `crba` | 17.6 | 39.3 | 55.0 |
-| `aba` | 48.5 | 105.7 | 157.3 |
-| `fd_crba` | 53.5 | 81.4 | 188.7 |
-| `jacobian_world` | 10.5 | 15.0 | 12.2 |
+| | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) | g1 (35 dof, 40 links) |
+|---|---|---|---|---|
+| `update_kinematics` | 10.6 | 17.8 | 27.1 | 59.4 |
+| `rnea` | 17.5 | 30.4 | 48.5 | 107.0 |
+| `crba` | 17.5 | 39.3 | 54.8 | 197.4 |
+| `aba` | 48.2 | 105.1 | 156.4 | 374.9 |
+| `fd_crba` | 53.3 | 81.3 | 188.5 | 770.9 |
+| `jacobian_world` | 10.7 | 15.1 | 12.3 | 26.0 |
 
 Control-loop budgets on that part:
 
-| | spine | xarm7 | go2 |
-|---|---|---|---|
-| torque `update + rnea` | 28 µs / 35.9 kHz | 48 µs / 20.7 kHz | 75 µs / 13.2 kHz |
-| operational space `+ crba` | 45 µs / 22.0 kHz | 88 µs / 11.4 kHz | 130 µs / 7.7 kHz |
-| forward dynamics, best method | 59 µs / 17.0 kHz | 99 µs / 10.1 kHz | 184 µs / 5.4 kHz |
+| | spine | xarm7 | go2 | g1 |
+|---|---|---|---|---|
+| torque `update + rnea` | 28 µs / 35.6 kHz | 48 µs / 20.8 kHz | 76 µs / 13.2 kHz | 166 µs / 6.0 kHz |
+| operational space `+ crba` | 46 µs / 22.0 kHz | 87 µs / 11.4 kHz | 130 µs / 7.7 kHz | 364 µs / 2.7 kHz |
+| forward dynamics, best method | 59 µs / 17.0 kHz | 99 µs / 10.1 kHz | 183 µs / 5.5 kHz | 434 µs / 2.3 kHz |
+
+`g1` is a Unitree G1 humanoid, 29 actuated joints on a floating base, and the
+largest model in the suite. **A 29-DOF humanoid closes a 6 kHz torque loop on
+one Cortex-M4F.** Its forward dynamics is the clearest case for ABA: at nv=35
+with a floating base the CRBA solve costs 771 µs against ABA's 375.
 
 **Forward dynamics has two methods and the caller picks.**
 `rd_forward_dynamics(..., RD_FD_ABA | RD_FD_CRBA, work, qdd)`. CRBA builds M
@@ -188,7 +193,8 @@ turns miss and most URDFs hit. Tell people to measure their own model.
 
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
-one frame), `aba` at ~12 µs per moving link on this part.
+one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly
+nv^2 once nv is large -- Go2's 18 costs 55 µs and G1's 35 costs 197.
 
 **Every file in `benchmark/results/` is current as of v0.5.0**, across five
 cores. Go2 torque tick: **70 µs** (RP2350 Cortex-M33 @ 150 MHz, the image runs

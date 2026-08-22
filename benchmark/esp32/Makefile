@@ -36,7 +36,7 @@ FQBN := esp32:esp32:$(CHIP):CDCOnBoot=cdc,CPUFreq=$(FREQ),PartitionScheme=huge_a
 # -O3 sits at the end of the recipe, after the core's -Os, so it wins. Every
 # other port in this benchmark is built -O3; matching it is the point.
 DEFS := -DBENCH_ESP32=1 -DBENCH_NO_MAIN=1 -DRD_USE_SINGLE_PRECISION=1 \
-        -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=24 \
+        -DRD_MAX_LINKS=40 -DRD_MAX_JOINTS=32 \
         -I$(ROOT)/RobotDynamics -I$(ROOT)/benchmark -O3
 
 $(SKETCH)/build_opt.h:

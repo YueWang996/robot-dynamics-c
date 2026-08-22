@@ -159,33 +159,37 @@ precision, `-O3`:
 | | **M4F @ 170**<br><sub>STM32G474</sub> | **M4F @ 80**<br><sub>STM32L413</sub> | **M33 @ 150**<br><sub>RP2350</sub> | **Hazard3 @ 150**<br><sub>RP2350</sub> | **RV32 @ 160**<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | FPU | FPU | FPU | *no FPU* | *no FPU* |
-| `update_kinematics` | 26.9 | 55.5 | 24.9 | 265.3 | 355.3 |
+| `update_kinematics` | 27.1 | 55.5 | 24.9 | 265.3 | 355.3 |
 | `fk_frame` | 10.7 | 22.2 | 9.9 | 107.0 | 142.3 |
-| `jacobian_world` | 12.2 | 25.4 | 10.3 | 63.8 | 81.1 |
+| `jacobian_world` | 12.3 | 25.4 | 10.3 | 63.8 | 81.1 |
 | `jacobian_local` | 19.9 | 41.6 | 16.7 | 177.6 | 224.3 |
-| `rnea` | 48.6 | 100.6 | 45.4 | 767.9 | 936.1 |
-| `crba` | 55.0 | 113.3 | 55.9 | 530.4 | 678.5 |
-| `aba` | 157.3 | 327.1 | 120.2 | 1756.8 | 2208.1 |
+| `rnea` | 48.5 | 100.6 | 45.4 | 767.9 | 936.1 |
+| `crba` | 54.8 | 113.3 | 55.9 | 530.4 | 678.5 |
+| `aba` | 156.4 | 327.1 | 120.2 | 1756.8 | 2208.1 |
 | `gravity` | 35.1 | 72.0 | 32.7 | 314.3 | 474.6 |
 | `spatial_acceleration` | 19.5 | 40.8 | 17.9 | 202.8 | 275.9 |
 | `spatial_velocity` | 4.7 | 9.7 | 4.6 | 52.3 | 72.5 |
 | | | | | | |
-| **torque tick** | 75 µs<br>13.2 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
+| **torque tick** | 76 µs<br>13.2 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
 | **operational space** | 130 µs<br>7.7 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1970 µs<br>508 Hz |
-| **forward dynamics** | 184 µs<br>5.4 kHz | 383 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2563 µs<br>390 Hz |
+| **forward dynamics** | 183 µs<br>5.5 kHz | 383 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2563 µs<br>390 Hz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
 forward dynamics is `update_kinematics` + the faster of ABA and CRBA for that
 robot.
 
-How it scales with the robot, on the slowest FPU part here — an STM32L413 at
-80 MHz:
+How it scales with the robot, on the STM32G474 at 170 MHz:
 
 | Robot | nv | Torque tick | Operational space | Forward dynamics |
 |---|---|---|---|---|
-| `spine` | 9 | 58 µs — 17.3 kHz | 94 µs — 10.6 kHz | 122 µs — 8.2 kHz |
-| `xarm7` | 7 | 100 µs — 10.0 kHz | 181 µs — 5.5 kHz | 206 µs — 4.9 kHz |
-| `go2` | 18 | 156 µs — 6.4 kHz | 269 µs — 3.7 kHz | 383 µs — 2.6 kHz |
+| `spine` | 9, floating | 28 µs — 35.6 kHz | 46 µs — 22.0 kHz | 59 µs — 17.0 kHz |
+| `xarm7` | 7, fixed | 48 µs — 20.8 kHz | 87 µs — 11.4 kHz | 99 µs — 10.1 kHz |
+| `go2` | 18, floating | 76 µs — 13.2 kHz | 130 µs — 7.7 kHz | 183 µs — 5.5 kHz |
+| `g1` | 35, floating | 166 µs — 6.0 kHz | 364 µs — 2.7 kHz | 434 µs — 2.3 kHz |
+
+`g1` is a Unitree G1, a **29-DOF humanoid**: 40 links, a floating base, and the
+largest model in the suite. It closes a 6 kHz torque loop on a single
+Cortex-M4F.
 
 > [!NOTE]
 > **Pick a core with a hardware FPU.** The two soft-float columns run 10–20×

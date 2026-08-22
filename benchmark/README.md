@@ -85,6 +85,21 @@ To regenerate the tables in the top-level README:
 python3 tools/report.py benchmark/results/[!c]*.csv
 ```
 
+## The g1 model
+
+`benchmark/models/model_g1.h` is a Unitree G1, 29 actuated joints on a floating
+base, and the only model here whose URDF is not in bard. To regenerate it, or
+to run `tools/validate.py` against it, fetch the URDF first:
+
+```bash
+curl -LO https://raw.githubusercontent.com/unitreerobotics/unitree_ros/master/robots/g1_description/g1_29dof.urdf
+python3 tools/urdf2c.py g1_29dof.urdf -n g1 -o benchmark/models/model_g1.h --floating-base
+```
+
+`validate.py` looks for it at
+`<urdf-root>/examples/example_robots/g1_description/g1_29dof.urdf` and skips
+that row when it is absent.
+
 ## What the harness does
 
 * Auto-calibrates each timing loop to run for at least 50 ms, so the 1 µs timer
