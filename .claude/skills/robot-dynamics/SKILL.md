@@ -162,56 +162,54 @@ STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
 | | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) |
 |---|---|---|---|
-| `update_kinematics` | 10.4 | 17.9 | 27.4 |
-| `rnea` | 18.3 | 32.3 | 51.5 |
-| `crba` | 18.6 | 40.5 | 60.9 |
-| `aba` | 57.4 | 104.1 | 181.0 |
-| `fd_crba` | 55.5 | 84.5 | 197.6 |
-| `jacobian_world` | 10.7 | 15.1 | 12.3 |
-
-(the G474 file predates the last two rounds -- worth ~3% on a tick and ~11% on
-`aba`; the STM32L413 numbers in `benchmark/results/` are the current ones)
+| `update_kinematics` | 10.4 | 17.9 | 26.9 |
+| `rnea` | 17.5 | 30.4 | 48.6 |
+| `crba` | 17.6 | 39.3 | 55.0 |
+| `aba` | 48.5 | 105.7 | 157.3 |
+| `fd_crba` | 53.5 | 81.4 | 188.7 |
+| `jacobian_world` | 10.5 | 15.0 | 12.2 |
 
 Control-loop budgets on that part:
 
 | | spine | xarm7 | go2 |
 |---|---|---|---|
-| torque `update + rnea` | 29 µs / 34.9 kHz | 50 µs / 19.9 kHz | 79 µs / 12.7 kHz |
-| operational space `+ crba` | 47 µs / 21.2 kHz | 91 µs / 11.0 kHz | 140 µs / 7.2 kHz |
-| forward dynamics, best method | 66 µs / 15.2 kHz | 102 µs / 9.8 kHz | 208 µs / 4.8 kHz |
+| torque `update + rnea` | 28 µs / 35.9 kHz | 48 µs / 20.7 kHz | 75 µs / 13.2 kHz |
+| operational space `+ crba` | 45 µs / 22.0 kHz | 88 µs / 11.4 kHz | 130 µs / 7.7 kHz |
+| forward dynamics, best method | 59 µs / 17.0 kHz | 99 µs / 10.1 kHz | 184 µs / 5.4 kHz |
 
 **Forward dynamics has two methods and the caller picks.**
 `rd_forward_dynamics(..., RD_FD_ABA | RD_FD_CRBA, work, qdd)`. CRBA builds M
 and h and factorises; it needs `rd_forward_dynamics_work()` floats of scratch.
-On the STM32L413: ABA wins for spine by 10% and Go2 by 16%, CRBA wins for
-xarm7 by 19%. Two effects pull opposite ways -- the solve is nv^3 and a
+On the STM32L413: ABA wins for spine by 9% and Go2 by 17%, CRBA wins for
+xarm7 by 23%. Two effects pull opposite ways -- the solve is nv^3 and a
 floating base gives the mass matrix no sparsity, but ABA's congruence has a
 fast path for joints whose origin carries no rotation, which xarm7's quarter
 turns miss and most URDFs hit. Tell people to measure their own model.
 
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
-one frame), `aba` at ~14 µs per moving link.
+one frame), `aba` at ~12 µs per moving link on this part.
 
-**The two RP2350 columns in `benchmark/results/` are the only stale ones.**
-They predate this round of optimisation and are pessimistic by 2–3x on the
-dynamics and more on CRBA and the Jacobians; say so rather than quoting them.
-The STM32G474, STM32L413 and ESP32-C6 files were captured together and are
-current.
+**Every file in `benchmark/results/` is current as of v0.5.0**, across five
+cores. Go2 torque tick: **70 µs** (RP2350 Cortex-M33 @ 150 MHz, the image runs
+from SRAM), **75 µs** (STM32G474 @ 170 MHz), 156 µs (STM32L413 @ 80 MHz),
+1033 µs (RP2350 Hazard3, no FPU), 1291 µs (ESP32-C6, no FPU). The two M4F parts
+agree to within **2.5% on cycles per call** (median 0.975), so scale another
+M4F from these by clock.
 
-Go2 torque tick across the current three: **79 µs (G474 @ 170 MHz)**, 163 µs
-(L413 @ 80 MHz), 1294 µs (ESP32-C6, no FPU). The two M4F parts agree to within
-**2.5% on cycles per call** (median 0.975), so scale another M4F from these by
-clock.
+A part with no FPU costs 10–20x; say so when someone is choosing one for a
+quadruped.
 
 **Instruction fetch, not the core.** On an STM32G474 at 170 MHz the flash needs
 four wait states and the ART instruction cache is 1 KB. Measured by running the
 same code from CCM SRAM (`make CCMBENCH=1`) and at 16 MHz with zero wait states
 (`make ZEROWS=1`):
 
-- `rd_aba` pays **21%** to instruction fetch, `rd_update_kinematics` 14%,
-  `rnea` and `crba` under 3%. The split follows loop-body size against the 1 KB
-  cache, not algorithm cost.
+- `rd_aba` pays **20%** to instruction fetch and nothing else pays more than
+  6%: `update_kinematics` 4%, `rnea` 4%, `crba` 2%. Go2 forward dynamics
+  184 -> 151 µs from the placement alone. The split follows loop-body size
+  against the 1 KB cache, not algorithm cost -- ABA's inner loop is the one
+  thing here that does not fit.
 - At zero wait states the code issues about **one instruction per cycle**. GCC
   already interleaves the independent FMA chains and spills only 14 of 95
   memory operations in the largest kernel, so **hand-written assembly has no

@@ -159,20 +159,20 @@ precision, `-O3`:
 | | **M4F @ 170**<br><sub>STM32G474</sub> | **M4F @ 80**<br><sub>STM32L413</sub> | **M33 @ 150**<br><sub>RP2350</sub> | **Hazard3 @ 150**<br><sub>RP2350</sub> | **RV32 @ 160**<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | FPU | FPU | FPU | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.4 | 55.5 | 24.9 | 265.3 | 355.3 |
-| `fk_frame` | 10.6 | 22.2 | 9.9 | 107.0 | 142.3 |
-| `jacobian_world` | 12.3 | 25.4 | 10.3 | 63.8 | 81.1 |
+| `update_kinematics` | 26.9 | 55.5 | 24.9 | 265.3 | 355.3 |
+| `fk_frame` | 10.7 | 22.2 | 9.9 | 107.0 | 142.3 |
+| `jacobian_world` | 12.2 | 25.4 | 10.3 | 63.8 | 81.1 |
 | `jacobian_local` | 19.9 | 41.6 | 16.7 | 177.6 | 224.3 |
-| `rnea` | 51.5 | 100.6 | 45.4 | 767.9 | 936.1 |
-| `crba` | 60.9 | 113.3 | 55.9 | 530.4 | 678.5 |
-| `aba` | 181.0 | 327.1 | 120.2 | 1756.8 | 2208.1 |
-| `gravity` | 34.5 | 72.0 | 32.7 | 314.3 | 474.6 |
-| `spatial_acceleration` | 22.8 | 40.8 | 17.9 | 202.8 | 275.9 |
+| `rnea` | 48.6 | 100.6 | 45.4 | 767.9 | 936.1 |
+| `crba` | 55.0 | 113.3 | 55.9 | 530.4 | 678.5 |
+| `aba` | 157.3 | 327.1 | 120.2 | 1756.8 | 2208.1 |
+| `gravity` | 35.1 | 72.0 | 32.7 | 314.3 | 474.6 |
+| `spatial_acceleration` | 19.5 | 40.8 | 17.9 | 202.8 | 275.9 |
 | `spatial_velocity` | 4.7 | 9.7 | 4.6 | 52.3 | 72.5 |
 | | | | | | |
-| **torque tick** | 79 µs<br>12.7 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
-| **operational space** | 140 µs<br>7.2 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1970 µs<br>508 Hz |
-| **forward dynamics** | 208 µs<br>4.8 kHz | 383 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2563 µs<br>390 Hz |
+| **torque tick** | 75 µs<br>13.2 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
+| **operational space** | 130 µs<br>7.7 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1970 µs<br>508 Hz |
+| **forward dynamics** | 184 µs<br>5.4 kHz | 383 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2563 µs<br>390 Hz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
 forward dynamics is `update_kinematics` + the faster of ABA and CRBA for that
@@ -190,9 +190,9 @@ How it scales with the robot, on the slowest FPU part here — an STM32L413 at
 > [!NOTE]
 > **Pick a core with a hardware FPU.** The two soft-float columns run 10–20×
 > slower, so a quadruped wants an M4F, M33 or better. The Pico 2 image is the
-> only one linked `copy_to_ram` and pays no flash wait states, which is why a
-> 150 MHz M33 lands ahead of a 170 MHz M4F. The G474 column is four changes
-> behind the others; that board is away.
+> only one linked `copy_to_ram` and pays no flash wait states, which is most of
+> what separates a 150 MHz M33 from a 170 MHz M4F here. Every column is current
+> as of v0.5.0.
 
 Raw CSV lives in [`benchmark/results/`](benchmark/results/), and
 `tools/report.py` regenerates these tables from it.
