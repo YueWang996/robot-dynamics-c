@@ -1,0 +1,23 @@
+# board=STM32G474 @ 170 MHz (Cortex-M4F, 4 flash wait states)
+# opponent=Pinocchio's code generation, traced with pinocchio.casadi, CasADi C
+# both=float32, -O3, arm-none-eabi-gcc 15.2.1, same board, same timing protocol
+# err=worst relative error against Pinocchio's own double-precision result
+# code=.text of the compiled objects, same compiler and flags, nothing removed:
+#   generated rnea+aba+crba is 17,425 B for spine, 29,021 for xarm7, 67,221 for
+#   go2, 113,667 for all three; the whole RobotDynamics library is 40,236 B and
+#   handles any robot
+# note=cycles are what matters here; ns follow from the 170 MHz clock. The G474
+#   has 512 KB of flash, so all three robots' generated code fits at once.
+robot,algorithm,rd_ns10,codegen_ns10,rd_cycles,codegen_cycles,speedup100,rd_err_ppb,codegen_err_ppb
+spine,rnea,284883,735176,4843,12498,258,197,197
+spine,aba,593467,1600645,10089,27211,270,191,2872
+spine,crba,282588,671943,4804,11423,238,12,12
+spine,rnea+crba,459116,1407461,7805,23927,307,0,0
+xarm7,rnea,488945,1491406,8312,25354,305,228,114
+xarm7,aba,1240820,1804180,21094,30671,145,90,2
+xarm7,crba,577295,1434590,9814,24388,249,119,89
+xarm7,rnea+crba,882998,2926055,15011,49743,331,0,0
+go2,rnea,768115,3418828,13058,58120,445,137,137
+go2,aba,1854473,4692969,31526,79780,253,47,141
+go2,crba,829648,3112930,14104,52920,375,119,4
+go2,rnea+crba,1318770,6531875,22419,111042,495,0,0

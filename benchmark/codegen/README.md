@@ -49,13 +49,20 @@ openocd -f interface/cmsis-dap.cfg -f target/stm32g4x.cfg \
   -c init -c "reset halt" -c "arm semihosting enable" -c resume
 ```
 
-The generated sources are 423 KB of C for the three robots, which builds to
-about 185 KB of Cortex-M4 code. The STM32L413 port has 128 KB to link into, so
-generate the subset that fits -- `gen.py --robots go2` -- and bench_codegen.c
-drops the rest automatically; it keys off the `CG_<ROBOT>_NQ` macros cg_data.h
-defines. Go2's three algorithms alone are 66,534 bytes of Cortex-M4 code
-against 24,794 for the whole library.
+The generated sources are 456 KB of C for the three robots, which builds to
+113,667 bytes of Cortex-M4 code -- 17,425 for spine, 29,021 for xarm7, 67,221
+for go2 -- against 40,236 bytes for the whole library, which handles any robot.
+Those are `.text` of the compiled objects on both sides, same compiler and
+flags, nothing removed.
 
-Results: [`../results/codegen_stm32l413.csv`](../results/codegen_stm32l413.csv),
+The G474 has 512 KB of flash and takes all three at once. The STM32L413 port
+has 128 KB to link into, so generate the subset that fits --
+`gen.py --robots go2` -- and bench_codegen.c drops the rest automatically; it
+keys off the `CG_<ROBOT>_NQ` macros cg_data.h defines.
+
+Results: [`../results/codegen_stm32g474.csv`](../results/codegen_stm32g474.csv)
+for all three robots and
+[`../results/codegen_stm32l413.csv`](../results/codegen_stm32l413.csv) for go2,
 summarised in the top-level README. Short version: code generation wins on a
-desktop by 1.1-1.7x and loses on a Cortex-M4 by 2.1-4.1x.
+desktop by 1.1-1.7x and loses on a Cortex-M4 by 1.5-5.0x, with the gap widening
+as the robot grows.

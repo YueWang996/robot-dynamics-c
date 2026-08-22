@@ -31,7 +31,7 @@ and mass matrices fast enough to close the loop on the robot itself.
 | **Precision** | `float` by default, `double` with one flag |
 | **Allocation** | None in the control loop. One caller-provided buffer holds every algorithm's scratch |
 | **Dependencies** | `libm`. That is the whole list |
-| **Footprint** | **24.8 KB** of Cortex-M4 code for the entire library |
+| **Footprint** | **40.2 KB** of Cortex-M4 code for the whole library, about 25 KB once `--gc-sections` drops what you do not call |
 | **Distribution** | One header. Download it from [Releases](../../releases/latest) and copy it in |
 | **Model input** | URDF, through `tools/urdf2c.py` |
 | **Interop** | `q`, `qd`, `qdd` and `tau` use Pinocchio's layout, so vectors pass straight to [bard](https://github.com/YueWang996/bard-pytorch-dynamics) and back |
@@ -212,29 +212,46 @@ subexpression eliminated. That is the strongest opponent available, so
 float32, `-O3`, same compiler, same board, and both are checked against
 Pinocchio's own double-precision answer.
 
-**Speed** — Go2 on an STM32L413 at 80 MHz, cycles per call, `update_kinematics`
+**Speed** — cycles per call on an STM32G474 at 170 MHz, `update_kinematics`
 plus the algorithm against one generated call:
 
-| | RobotDynamics | Code generation | |
-|---|---|---|---|
-| `rnea` | **13,161** | 50,729 | **3.9×** |
-| `aba` | **35,042** | 72,215 | **2.1×** |
-| `crba` | **14,696** | 44,823 | **3.1×** |
-| `rnea` + `crba` | **23,239** | 95,534 | **4.1×** |
+| | | RobotDynamics | Code generation | |
+|---|---|---|---|---|
+| `spine` | `rnea` | **4,843** | 12,498 | **2.6×** |
+| 9 dof | `aba` | **10,089** | 27,211 | **2.7×** |
+| | `crba` | **4,804** | 11,423 | **2.4×** |
+| | `rnea` + `crba` | **7,805** | 23,927 | **3.1×** |
+| `xarm7` | `rnea` | **8,312** | 25,354 | **3.1×** |
+| 7 dof | `aba` | **21,094** | 30,671 | **1.5×** |
+| | `crba` | **9,814** | 24,388 | **2.5×** |
+| | `rnea` + `crba` | **15,011** | 49,743 | **3.3×** |
+| `go2` | `rnea` | **13,058** | 58,120 | **4.5×** |
+| 18 dof | `aba` | **31,526** | 79,780 | **2.5×** |
+| | `crba` | **14,104** | 52,920 | **3.8×** |
+| | `rnea` + `crba` | **22,419** | 111,042 | **5.0×** |
 
-**Size** — Go2's three generated algorithms against this library in full:
+**The lead widens with the robot** — 2.4–3.1× on the 9-DOF spine, 3.8–5.0× on
+Go2's `crba` and `rnea+crba` — because the generated code grows with the model
+while the library does not.
+
+**Size** — `.text` of the compiled objects, same compiler and flags:
 
 | | Cortex-M4 code |
 |---|---|
-| Generated `rnea` + `aba` + `crba`, Go2 only | 66,534 bytes |
-| **RobotDynamics, whole library, any robot** | **24,794 bytes** |
+| Generated `rnea` + `aba` + `crba`, `spine` only | 17,425 bytes |
+| … `xarm7` only | 29,021 bytes |
+| … `go2` only | 67,221 bytes |
+| … all three | 113,667 bytes |
+| **RobotDynamics, whole library, any robot** | **40,236 bytes** |
 
 An in-order core with 32 FP registers turns the generated code's thousands of
 simultaneously-live temporaries into stack traffic, and the size makes every
-iteration an instruction fetch: the generated code pays a 25–29% fetch tax
-where this library's RNEA and CRBA pay 7–9%. Code generation trades size for
-arithmetic, and that trade pays on a desktop — on an x86-64 host it wins by
-1.1–1.7×.
+iteration an instruction fetch. Code generation trades size for arithmetic, and
+that trade pays on a desktop — on an x86-64 host it wins by 1.1–1.7×.
+
+The same head-to-head on an STM32L413 is in
+[`benchmark/results/`](benchmark/results/); its 128 KB of flash fits Go2's
+generated code alone, where the G474's 512 KB fits all three robots at once.
 
 ---
 

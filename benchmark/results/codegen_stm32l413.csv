@@ -2,7 +2,9 @@
 # opponent=Pinocchio's code generation, traced with pinocchio.casadi, CasADi C
 # both=float32, -O3, arm-none-eabi-gcc 15.2.1, same board, same timing protocol
 # err=worst relative error against Pinocchio's own double-precision result
-# code=generated go2 rnea+aba+crba 66,534 bytes; whole RobotDynamics library 24,794 bytes
+# code=generated go2 rnea+aba+crba 66,534 bytes. The library figure this line
+#   used to carry was measured after --gc-sections and is not comparable; see
+#   codegen_stm32g474.csv, where both sides are .text of the compiled objects.
 # note=cycles are what matters here; ns follow from the 80 MHz clock. The 16 MHz
 #   rows are the same binary at zero flash wait states, which separates the core
 #   from the fetch. Only go2 fits the 128 KB flash budget alongside the library.
