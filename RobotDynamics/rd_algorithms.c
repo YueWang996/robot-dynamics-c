@@ -116,27 +116,31 @@ static RD_INLINE rd_int_t algo_vel_index(const rd_chain_t* chain, rd_idx_t node)
     return chain->has_floating_base ? (6 + jidx) : jidx;
 }
 
-/* In-place Cholesky solve of an n x n SPD system, A x = b, A row-major and
- * destroyed. Returns 0 on success. Used for the floating base's 6x6 block and
- * for the whole mass matrix in RD_FD_CRBA. */
-static int algo_solve_spd(rd_real_t* RD_RESTRICT L, const rd_real_t* RD_RESTRICT b,
-                          rd_real_t* RD_RESTRICT x, rd_int_t n,
-                          rd_real_t* RD_RESTRICT dinv) {
+rd_status_t rd_cholesky_factor(rd_real_t* RD_RESTRICT A, rd_int_t n,
+                               rd_real_t* RD_RESTRICT dinv) {
+    if (!A || !dinv) return RD_ERR_NULL_PTR;
     for (rd_int_t j = 0; j < n; ++j) {
-        rd_real_t d = L[j*n + j];
-        for (rd_int_t k = 0; k < j; ++k) d -= L[j*n + k] * L[j*n + k];
-        if (d <= RD_EPS) return -1;               /* not positive definite */
+        rd_real_t d = A[j*n + j];
+        for (rd_int_t k = 0; k < j; ++k) d -= A[j*n + k] * A[j*n + k];
+        if (d <= RD_EPS) return RD_ERR_SINGULAR;  /* not positive definite */
         d = rd_sqrt(d);
-        L[j*n + j] = d;
+        A[j*n + j] = d;
         const rd_real_t inv = RD_REAL(1.0) / d;
         dinv[j] = inv;                            /* both substitutions want it */
         for (rd_int_t i = j + 1; i < n; ++i) {
-            rd_real_t sum = L[i*n + j];
-            for (rd_int_t k = 0; k < j; ++k) sum -= L[i*n + k] * L[j*n + k];
-            L[i*n + j] = sum * inv;
+            rd_real_t sum = A[i*n + j];
+            for (rd_int_t k = 0; k < j; ++k) sum -= A[i*n + k] * A[j*n + k];
+            A[i*n + j] = sum * inv;
         }
     }
+    return RD_OK;
+}
 
+rd_status_t rd_cholesky_solve(const rd_real_t* RD_RESTRICT L,
+                              const rd_real_t* RD_RESTRICT dinv,
+                              const rd_real_t* RD_RESTRICT b,
+                              rd_real_t* RD_RESTRICT x, rd_int_t n) {
+    if (!L || !dinv || !b || !x) return RD_ERR_NULL_PTR;
     /* forward substitution: L y = b, into x */
     for (rd_int_t i = 0; i < n; ++i) {
         rd_real_t sum = b[i];
@@ -149,6 +153,15 @@ static int algo_solve_spd(rd_real_t* RD_RESTRICT L, const rd_real_t* RD_RESTRICT
         for (rd_int_t k = i + 1; k < n; ++k) sum -= L[k*n + i] * x[k];
         x[i] = sum * dinv[i];
     }
+    return RD_OK;
+}
+
+/* Factor and solve in one go, which is what the forward dynamics wants. */
+static int algo_solve_spd(rd_real_t* RD_RESTRICT L, const rd_real_t* RD_RESTRICT b,
+                          rd_real_t* RD_RESTRICT x, rd_int_t n,
+                          rd_real_t* RD_RESTRICT dinv) {
+    if (rd_cholesky_factor(L, n, dinv) != RD_OK) return -1;
+    rd_cholesky_solve(L, dinv, b, x, n);
     return 0;
 }
 

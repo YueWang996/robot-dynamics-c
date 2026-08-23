@@ -174,6 +174,37 @@ rd_status_t rd_aba_ext(const rd_chain_t* chain,
                        const rd_real_t* f_ext,
                        rd_real_t* qdd_out);
 
+/* ============================================================================
+ * Linear algebra
+ *
+ * The factorisation the forward dynamics already uses, exposed because the
+ * things people build on a mass matrix -- operational-space inertia, a
+ * task-space controller, a constrained solve -- all want it and should not
+ * have to bring their own.
+ * ========================================================================= */
+
+/**
+ * @brief Cholesky factorisation of an n x n symmetric positive definite matrix.
+ *
+ * A is row-major and is overwritten with L in its lower triangle; the upper
+ * triangle is left as it was. Only the lower triangle of the input is read, so
+ * a mass matrix from rd_crba() can be passed straight in.
+ *
+ * @param dinv [n] scratch, filled with 1/L_ii, which rd_cholesky_solve() needs.
+ * @return RD_ERR_SINGULAR if A is not positive definite.
+ */
+rd_status_t rd_cholesky_factor(rd_real_t* A, rd_int_t n, rd_real_t* dinv);
+
+/**
+ * @brief Solve A x = b from rd_cholesky_factor()'s output.
+ *
+ * One factorisation serves any number of right-hand sides, which is the point
+ * of having the two apart: J M^-1 J^T costs one factorisation and six solves.
+ * x and b may not alias.
+ */
+rd_status_t rd_cholesky_solve(const rd_real_t* L, const rd_real_t* dinv,
+                              const rd_real_t* b, rd_real_t* x, rd_int_t n);
+
 /** @brief Joint-space mass matrix M(q). @param M_out [nv*nv] row-major. */
 rd_status_t rd_crba(const rd_chain_t* chain,
                     const rd_state_t* state,

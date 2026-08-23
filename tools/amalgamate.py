@@ -164,6 +164,20 @@ ARM_FLAGS = ["-mcpu=cortex-m4", "-mthumb", "-mfpu=fpv4-sp-d16", "-mfloat-abi=har
 
 INSN = re.compile(r"^\s*([0-9a-f]+):\t")   # the instruction's own address
 ADDR = re.compile(r"\b[0-9a-f]{1,8} <")   # and any address it names
+# A branch's encoding width is chosen by how far the target ended up, and the
+# assembler pads to keep alignment. Both change when three objects become one
+# and neither is a difference in what the code does.
+WIDTH = re.compile(r"^(b[a-z]*)\.[nw]\t")
+PAD = re.compile(r"^nop(\.[nw])?$")
+SELF = re.compile(r"<([A-Za-z_.0-9]+)\+0x([0-9a-f]+)>")
+
+
+def by_index_named(m, name, start, index):
+    """<f+0xNN> inside f itself becomes <f#K>, K being which instruction it is."""
+    if m.group(1) != name:
+        return m.group(0)
+    at = start + int(m.group(2), 16)
+    return f"<{name}#{index[at]}>" if at in index else m.group(0)
 WORD = re.compile(r"^\.word\t0x([0-9a-f]+)$")   # a jump table entry, or a constant
 RELOC = re.compile(r"^\s+([0-9a-f]+): (R_\S+)\s+(\S+)")   # what the linker will fill in
 
@@ -237,8 +251,18 @@ def disassemble(objdump, *objects):
             return None
 
         for name, lines in raw.items():
+            kept = [(at, txt) for at, txt in lines if not PAD.match(txt.strip())]
+            # Byte offsets inside a function move when the assembler pads or
+            # widens a branch, so a target is named by which instruction it is
+            # rather than where it sits. Retargeting a branch still shows.
+            start = ends[name][0]
+            index = {}
+            for k, (at, _) in enumerate(kept):
+                if at is not None:
+                    index[at] = k
+
             body = []
-            for at, txt in lines:
+            for at, txt in kept:
                 if at in fixups:
                     # The value here is a placeholder; the symbol is the fact.
                     txt = f"{txt.split(chr(9))[0]}\t[{fixups[at]}]"
@@ -248,7 +272,9 @@ def disassemble(objdump, *objects):
                         target = jump_target(name, int(word.group(1), 16))
                         if target:
                             txt = f".word\t{target}"
-                body.append(ADDR.sub("<", txt))
+                txt = WIDTH.sub(r"\1\t", ADDR.sub("<", txt))
+                txt = SELF.sub(lambda m: by_index_named(m, name, start, index), txt)
+                body.append(txt)
             out[name] = body
     return out
 
