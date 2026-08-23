@@ -19,6 +19,14 @@ static void state_base_transform(const rd_real_t* q_base, rd_real_t T[16]) {
     rd_rot_to_mat4(R, q_base, T);
 }
 
+/* The carve-up in rd_state_init() and RD_STATE_FLOATS_PER_NODE have to agree.
+ * They are not checkable at run time -- every field lives in the one caller
+ * buffer, so a field added without bumping the constant writes over its
+ * neighbour rather than off the end, and no sanitiser sees a thing. */
+typedef char rd_state_layout_check[
+    (16 + 6 + 1 + RD_ABI_LEN + 6 + 6 + 6 + 6 + 1 + 1
+     == RD_STATE_FLOATS_PER_NODE) ? 1 : -1];
+
 size_t rd_state_buffer_size(rd_int_t n) {
     return (size_t)RD_STATE_BUF_FLOATS(n) * sizeof(rd_real_t);
 }
@@ -41,7 +49,7 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
     state->v                 = buf + off; off += (size_t)n * 6;
     state->vj                = buf + off; off += (size_t)n;
 
-    state->inertia           = buf + off; off += (size_t)n * 36;
+    state->inertia           = buf + off; off += (size_t)n * RD_ABI_LEN;
     state->accel             = buf + off; off += (size_t)n * 6;
     state->force             = buf + off; off += (size_t)n * 6;
     state->cvp               = buf + off; off += (size_t)n * 6;

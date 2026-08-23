@@ -42,10 +42,10 @@ extern "C" {
 
 /**
  * Floats of workspace per link. Cache is 23 (one 4x4 transform, a spatial
- * velocity, a joint velocity); scratch is 62, sized by the largest consumer,
+ * velocity, a joint velocity); scratch is 47, sized by the largest consumer,
  * which is rd_aba().
  */
-#define RD_STATE_FLOATS_PER_NODE  85
+#define RD_STATE_FLOATS_PER_NODE  70
 
 /** Elements to declare for a statically sized state buffer. */
 #define RD_STATE_BUF_FLOATS(n)    ((n) * RD_STATE_FLOATS_PER_NODE + 16)
@@ -78,7 +78,10 @@ typedef struct {
                                     *  spatial transform. */
 
     /* --- Scratch: owned by whichever algorithm is running ----------------- */
-    rd_real_t* inertia;           /**< 36*n, CRBA composite / ABA articulated */
+    rd_real_t* inertia;           /**< 21*n, ABA's articulated-body inertia,
+                                   *   symmetric so 21 numbers rather than 36.
+                                   *   CRBA's composite is a rigid body and
+                                   *   takes the first ten of each slot. */
     rd_real_t* accel;             /**< 6*n,  RNEA and ABA link accelerations */
     rd_real_t* force;             /**< 6*n,  RNEA forces / ABA bias forces */
     rd_real_t* cvp;               /**< 6*n,  ABA velocity-product accelerations */

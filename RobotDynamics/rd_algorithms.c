@@ -718,8 +718,8 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
     const rd_int_t nv = rd_chain_get_nv(chain);
     /* The composite is a sum of rigid-body inertias in a common frame, which is
      * itself a rigid body, so it lives in ten numbers rather than thirty-six.
-     * state->inertia is sized for the 6x6 that ABA needs; here only the first
-     * ten floats of each node's slot are used. */
+     * state->inertia is sized for the 21 that ABA's articulated inertia needs;
+     * here only the first ten floats of each node's slot are used. */
     rd_real_t* Ic = state->inertia;
     #define RD_IC(n) (&Ic[(n) * RD_INERTIA_COMPACT_LEN])
 
@@ -819,9 +819,9 @@ static rd_status_t aba_impl(const rd_chain_t* chain, const rd_state_t* state,
 
     const rd_int_t nv = rd_chain_get_nv(chain);
 
-    /* Symmetric throughout, so 21 numbers per node rather than 36.
-     * state->inertia is sized for the larger of the uses; this takes the
-     * first RD_ABI_LEN floats of each node's slot. */
+    /* Symmetric throughout, so 21 numbers per node rather than 36. This is
+     * what state->inertia is sized for; CRBA takes the first ten of each
+     * slot. */
     rd_real_t* IA = state->inertia;
     #define RD_IA(n) (&IA[(n) * RD_ABI_LEN])
     rd_real_t* pA = state->force;     /* bias force,               6*n  */
