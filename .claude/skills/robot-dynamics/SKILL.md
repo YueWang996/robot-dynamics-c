@@ -239,6 +239,19 @@ which is inside the noise floor. `rd_aba`/`rd_aba_ext` stop being declared and
 suggest it to anyone doing contact or constrained dynamics -- that is the one
 place ABA earns its keep.
 
+**`RD_MATH_BACKEND` for a part with a math accelerator.** Point it at a header
+of theirs that defines `RD_SINCOS(x, sp, cp)` and/or `RD_SQRT(x)` and it
+displaces the portable version. Macros, not function pointers -- `rd_sincos()`
+runs once per revolute joint inside `rd_update_kinematics()`'s loop.
+`RobotDynamics/backends/rd_cordic_stm32g4.h` is the worked example, for the
+STM32G4/H7 CORDIC: **66 cycles a (sin, cos) pair against the polynomial's 83,
+and 1.7e-06 error against 8.2e-08** -- about four and a half of float32's
+twenty-four bits, for 2-3% off `update_kinematics` and 3-7% off `fk_frame`.
+Offer it only when the caller has said that error is below their encoder, and
+tell them `make TRIG=1` in `benchmark/stm32g4` checks any backend against libm
+before timing it. Do not suggest it for a double build; the CORDIC is 32-bit
+fixed point and the header refuses.
+
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly

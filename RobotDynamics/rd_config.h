@@ -48,6 +48,30 @@ extern "C" {
     #define RD_FAST_TRIG  1
 #endif
 
+/* A board's own math accelerator.
+ *
+ * Define RD_MATH_BACKEND to a header of yours -- in quotes or angle brackets,
+ * the way #include wants it -- and rd_math.h includes it before it defines
+ * anything. The header may define any of:
+ *
+ *   RD_SINCOS(x, sp, cp)   sine and cosine of x, into *(sp) and *(cp)
+ *   RD_SQRT(x)             square root of x, as an expression
+ *
+ * Whatever it leaves undefined keeps the portable implementation, so a backend
+ * may cover one operation and ignore the other.
+ *
+ * These are macros and not function pointers deliberately. rd_sincos() is
+ * called once per revolute joint from inside rd_update_kinematics()'s loop and
+ * is 45% of that function on Go2; an indirect call there costs more than most
+ * accelerators save, and it would also stop the compiler from keeping the
+ * caller's values in registers across it.
+ *
+ *   #define RD_MATH_BACKEND "backends/rd_cordic_stm32g4.h"
+ *
+ * RobotDynamics/backends/ has one for the STM32G4 CORDIC. Write your own
+ * against that file as a worked example -- it needs no vendor headers.
+ */
+
 /* Compile the articulated-body algorithm (Default: 1).
  *
  * ABA is the only algorithm here that carries per-node state of its own -- an

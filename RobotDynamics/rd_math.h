@@ -16,6 +16,12 @@
 #include <math.h>
 #include <string.h>
 
+/* A board's own accelerator, ahead of everything that might defer to it.
+ * See RD_MATH_BACKEND in rd_config.h. */
+#ifdef RD_MATH_BACKEND
+#include RD_MATH_BACKEND
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,16 +37,24 @@ extern "C" {
     #include "arm_math.h"
     static RD_INLINE rd_real_t rd_sin(rd_real_t x) { return arm_sin_f32(x); }
     static RD_INLINE rd_real_t rd_cos(rd_real_t x) { return arm_cos_f32(x); }
-    static RD_INLINE rd_real_t rd_sqrt(rd_real_t x) { float r; arm_sqrt_f32(x, &r); return r; }
+    static RD_INLINE rd_real_t rd_sqrt_sw(rd_real_t x) { float r; arm_sqrt_f32(x, &r); return r; }
 #elif RD_REAL_IS_FLOAT
     static RD_INLINE rd_real_t rd_sin(rd_real_t x) { return sinf(x); }
     static RD_INLINE rd_real_t rd_cos(rd_real_t x) { return cosf(x); }
-    static RD_INLINE rd_real_t rd_sqrt(rd_real_t x) { return sqrtf(x); }
+    static RD_INLINE rd_real_t rd_sqrt_sw(rd_real_t x) { return sqrtf(x); }
 #else
     static RD_INLINE rd_real_t rd_sin(rd_real_t x) { return sin(x); }
     static RD_INLINE rd_real_t rd_cos(rd_real_t x) { return cos(x); }
-    static RD_INLINE rd_real_t rd_sqrt(rd_real_t x) { return sqrt(x); }
+    static RD_INLINE rd_real_t rd_sqrt_sw(rd_real_t x) { return sqrt(x); }
 #endif
+
+/* A backend's RD_SQRT wins; otherwise whichever the chain above picked. On a
+ * core with an FPU there is nothing here to accelerate -- sqrtf is one VSQRT
+ * instruction -- but on one without, this is a soft-float call. */
+#ifndef RD_SQRT
+    #define RD_SQRT(x)  rd_sqrt_sw(x)
+#endif
+static RD_INLINE rd_real_t rd_sqrt(rd_real_t x) { return RD_SQRT(x); }
 
 #if RD_REAL_IS_FLOAT
     static RD_INLINE rd_real_t rd_fabs(rd_real_t x) { return fabsf(x); }
@@ -72,8 +86,17 @@ extern "C" {
  * 1.9e-05, interpolating linearly between 512 table entries and giving up
  * accuracy float32 can resolve.
  *
- * RD_FAST_TRIG is on by default; set it to 0 for libm's results. */
-#if RD_FAST_TRIG && RD_REAL_IS_FLOAT
+ * A part with a trigonometric accelerator can displace this entirely: see
+ * RD_MATH_BACKEND in rd_config.h, and backends/rd_cordic_stm32g4.h for one
+ * that trades four bits for 20% of the pair.
+ *
+ * RD_FAST_TRIG is on by default; set it to 0 for libm's results. A backend's
+ * RD_SINCOS displaces both. */
+#if defined(RD_SINCOS)
+static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
+    RD_SINCOS(x, s, c);
+}
+#elif RD_FAST_TRIG && RD_REAL_IS_FLOAT
 /* Cody-Waite reduction onto [-pi/4, pi/4] plus a quadrant, then Taylor series
  * carried far enough that the truncation error sits under a float32 ULP. Joint
  * angles are bounded, so none of libm's Payne-Hanek machinery for huge

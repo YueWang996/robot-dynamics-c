@@ -19,6 +19,9 @@
 # the fastest configuration this part has. Two flags exist to characterise it
 # and neither is how you would ship:
 #
+#   make CORDIC=1    sin/cos on the CORDIC coprocessor rather than the
+#                    polynomial, through the RD_MATH_BACKEND hook
+#   make TRIG=1      check rd_sincos against libm before timing anything
 #   make ZEROWS=1    HSI16 at 16 MHz, where flash needs zero wait states
 #   make CCMBENCH=1  the library's hot code in CCM SRAM, on the I-Code bus at
 #                    zero wait states. 170 MHz otherwise unchanged.
@@ -47,6 +50,18 @@ CFLAGS := $(CPU) -O3 -std=gnu11 -Wall -Wextra -Wno-unused-parameter \
 # measured (copy_to_ram). Default is the normal flash image.
 ifeq ($(ZEROWS),1)
   CFLAGS += -DBENCH_G4_ZEROWS=1
+endif
+
+# CORDIC=1 routes sin/cos to the G474's CORDIC coprocessor through the
+# RD_MATH_BACKEND hook. See RobotDynamics/backends/rd_cordic_stm32g4.h.
+# TRIG=1 checks rd_sincos against libm in double before the suite runs, and
+# with CORDIC=1 also walks the coprocessor's precision field.
+ifeq ($(TRIG),1)
+  CFLAGS += -DBENCH_TRIG_ACCURACY=1
+endif
+
+ifeq ($(CORDIC),1)
+  CFLAGS += -DBENCH_G4_CORDIC=1 '-DRD_MATH_BACKEND="backends/rd_cordic_stm32g4.h"'
 endif
 
 ifeq ($(RAM),1)

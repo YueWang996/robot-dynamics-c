@@ -43,7 +43,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/robot_dynamics.h
+          files: |
+            dist/robot_dynamics.h
+            RobotDynamics/backends/rd_cordic_stm32g4.h
           body: |
             Drop `robot_dynamics.h` into your project. In exactly one `.c` file:
 
@@ -53,6 +55,11 @@ jobs:
             ```
 
             and include it plainly everywhere else.
+
+            `rd_cordic_stm32g4.h` is optional: an STM32G4/H7 CORDIC backend for
+            sine and cosine. Take it only if you want it, put it beside the
+            header, and build with
+            `-DRD_MATH_BACKEND='"rd_cordic_stm32g4.h"'`.
 
             This file is generated from the tree in this tag and verified to
             produce byte-identical Cortex-M4 code.

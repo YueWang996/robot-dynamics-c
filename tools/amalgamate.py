@@ -298,10 +298,21 @@ def verify(header_path):
             '#include "robot_dynamics.h"\n'
             "rd_int_t rd_probe_nv_(const rd_chain_t* c) { return rd_chain_get_nv(c); }\n")
 
+        # A stand-in for a hardware backend: enough to prove the
+        # RD_MATH_BACKEND hook survives amalgamation and still displaces the
+        # portable sin/cos in the shipped single file.
+        (tmp / "stub_backend.h").write_text(
+            "#include <math.h>\n"
+            "static inline void stub_sincos(float x, float* s, float* c)"
+            " { *s = sinf(x); *c = cosf(x); }\n"
+            "#define RD_SINCOS(x, sp, cp) stub_sincos((x), (sp), (cp))\n"
+            "#define RD_SQRT(x) sqrtf(x)\n")
+
         warn = ["-std=c99", "-pedantic", "-Wall", "-Wextra"]
         for label, extra in (("float32", []),
                              ("float64", ["-DRD_USE_SINGLE_PRECISION=0", "-DRD_FAST_TRIG=0"]),
-                             ("no-ABA", ["-DRD_ENABLE_ABA=0"])):
+                             ("no-ABA", ["-DRD_ENABLE_ABA=0"]),
+                             ("backend", ['-DRD_MATH_BACKEND="stub_backend.h"'])):
             exe = tmp / f"t_{label}"
             run([cc, "-O2", *warn, *extra, "-I", tmp, ROOT / "test_main.c",
                  tmp / "impl.c", tmp / "user.c", "-lm", "-o", exe])
@@ -310,6 +321,18 @@ def verify(header_path):
             print(f"  [{'ok  ' if passed else 'FAIL'}] {label}: three translation units, "
                   f"clean at -Wall -Wextra -pedantic, smoke test passes")
             ok &= passed
+
+        # Compiling is not proof the hook fired -- an ignored RD_SINCOS would
+        # also build and pass. Preprocess and look: the stub's name has to be
+        # in there and the polynomial's last coefficient has to be gone.
+        pp = subprocess.run(
+            [cc, "-E", "-I", str(tmp), '-DRD_MATH_BACKEND="stub_backend.h"',
+             str(tmp / "user.c")], capture_output=True, text=True)
+        displaced = ("stub_sincos" in pp.stdout
+                     and "2.7557319e-06" not in pp.stdout)
+        print(f"  [{'ok  ' if displaced else 'FAIL'}] backend: RD_SINCOS "
+              f"displaces the portable sin/cos, not merely compiles beside it")
+        ok &= displaced
 
         cxx = os.environ.get("CXX", "c++")
         if shutil.which(cxx):
