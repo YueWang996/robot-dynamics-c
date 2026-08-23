@@ -27,6 +27,9 @@ and mass matrices fast enough to close the loop on the robot itself.
 | **Algorithms** | Forward kinematics · geometric Jacobian · RNEA · ABA · CRBA · gravity, Coriolis and nonlinear terms · spatial velocity and acceleration |
 | **Joints** | Revolute, prismatic, fixed, and a floating base |
 | **Frames** | World and body, wherever a reference frame applies |
+| **Contacts** | External spatial forces on any link, applied inside the O(n) recursion — `rd_rnea_ext`, `rd_aba_ext` |
+| **Actuators** | Reflected rotor inertia per joint, which any geared drive needs — `rd_chain_set_armature` |
+| **Linear algebra** | The Cholesky the forward dynamics uses, exposed for task-space work — `rd_cholesky_factor` / `_solve` |
 | **Accuracy** | Validated against Pinocchio at **5.5e-15** (float64) and **1.9e-06** (float32) |
 | **Precision** | `float` by default, `double` with one flag |
 | **Allocation** | None in the control loop. One caller-provided buffer holds every algorithm's scratch |
@@ -43,10 +46,13 @@ comes from.
 
 > [!NOTE]
 > Pre-1.0, with three gaps worth stating. Prismatic joints are implemented and
-> unvalidated, since all four reference robots are revolute-only. Joint limits,
+> unvalidated, since the reference robots are revolute-only. Joint limits,
 > damping and friction are parsed and stored, and no algorithm reads them yet.
 > `rd_chain_build()` allocates once at startup, so `RD_STATIC_ALLOC=ON` is not
 > supported; the control loop is allocation-free either way.
+>
+> There is no controller here and no contact solver: this library gives you
+> M, h, J, J̇q̇ and a factorisation, and what you build on them is yours.
 
 ---
 
@@ -114,6 +120,15 @@ python3 tools/urdf2c.py my_robot.urdf -n my_robot -o model_my_robot.h --floating
 The converter enforces what the C model requires — axis-aligned joint axes,
 15-character link names, parents before children — and fails loudly on anything
 it cannot represent.
+
+**Contacts and geared joints.** `rd_rnea_ext` and `rd_aba_ext` take one spatial
+force per *link*, in that link's own body frame, and fold it into the recursion
+rather than costing a Jacobian per contact. Placing one on a foot works even
+though feet are usually fixed links that the chain folded away. `armature` is
+the reflected rotor inertia, `n²·I_rotor`, which on a servo or any high-ratio
+drive is often larger than the link it turns; URDF has no field for it, so it
+starts at zero and `rd_chain_set_armature()` fills it in. Both cost nothing
+when unused.
 
 **Conventions worth reading once.** Reversed, these produce a wrong robot
 quietly:

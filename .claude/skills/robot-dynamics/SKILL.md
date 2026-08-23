@@ -156,6 +156,43 @@ needs relaxing.
 Pinocchio comes from `pip install pin`; the tests skip themselves cleanly
 without it.
 
+## Contacts, geared joints, and the solve
+
+Three things exist for building a controller on top, and all three cost nothing
+when unused -- that was most of the work in adding them.
+
+**External forces.** `rd_rnea_ext(chain, state, qdd, gravity, f_ext, tau)` and
+`rd_aba_ext(chain, state, tau, gravity, f_ext, qdd)`. `f_ext` is `[6*n_nodes]`
+or NULL, one spatial force per **node** -- the indexing `rd_forward_kinematics`
+uses, not the velocity indexing of `tau` -- ordered `[linear, angular]` in that
+link's **own body frame**. It is the force the world applies to the link.
+
+Node indexing is what lets a contact sit where it physically does: feet and
+fingertips are usually *fixed* links, which `rd_chain_build` folds into the
+moving link above them, and a force placed on one is carried there
+automatically. To convert a world-frame contact force, rotate it by the
+transpose of the link's world rotation from `rd_forward_kinematics`.
+
+RNEA is linear in `f_ext`, so it runs as its own inward pass and the NULL path
+is byte-for-byte the old function. ABA cannot separate it and pays ~1%.
+
+**Armature.** `rd_chain_set_armature(chain, vidx, n^2 * I_rotor)`. Reflected
+rotor inertia, added to M's diagonal, to `tau` via `qdd`, and to the
+articulated inertia, so CRBA, RNEA and ABA stay consistent. **Tell anyone with
+a geared robot about this**: at a servo's reduction ratio the rotor term is
+routinely larger than the link, and without it M(q) comes out systematically
+small. URDF has no field for it, so it starts at zero.
+
+**Cholesky.** `rd_cholesky_factor(A, n, dinv)` overwrites A's lower triangle
+with L; `rd_cholesky_solve(L, dinv, b, x, n)` then solves for as many
+right-hand sides as wanted. That split is the point -- operational-space
+inertia is one factorisation and six solves.
+
+There is **no controller and no contact solver here**, deliberately. A WBC's
+shape is a choice about control architecture; this library supplies M, h, J,
+`J_dot*qd` (that is `rd_spatial_acceleration` with `qdd = NULL`) and the
+factorisation, and stops.
+
 ## Performance envelope
 
 STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
