@@ -3,18 +3,20 @@
  * @file rd_cordic_stm32g4.h
  * @brief RD_SINCOS on the STM32G4's CORDIC coprocessor.
  *
- * Use it by pointing the library at this file and calling the init once:
+ * Not part of the library. RobotDynamics ships one file and no vendor headers;
+ * a backend is the caller's to own, and this is an example of writing one.
+ * Copy it into your project if you want it:
  *
- *     #define RD_MATH_BACKEND "backends/rd_cordic_stm32g4.h"
+ *     #define RD_MATH_BACKEND "rd_cordic_stm32g4.h"
  *     ...
  *     rd_cordic_init();            // after the clock tree is up
  *     rd_chain_build(&model, &chain);
  *
- * Deliberately no vendor headers. The three registers this needs are written
- * out below, so the file drops next to the single-header distribution and
- * compiles against nothing but the toolchain. It is also the worked example
- * for RD_MATH_BACKEND -- a backend is a header that defines RD_SINCOS and/or
- * RD_SQRT, and that is the whole contract.
+ * Deliberately no vendor headers of its own either. The three registers it
+ * needs are written out below, so it drops next to the single-header
+ * distribution and compiles against nothing but the toolchain. A backend is a
+ * header that defines RD_SINCOS and/or RD_SQRT, and that is the whole
+ * contract.
  *
  * Parts: STM32G4 and STM32H7 carry this CORDIC. The register layout is the
  * same on both; only RD_CORDIC_BASE and the clock enable differ, and both are

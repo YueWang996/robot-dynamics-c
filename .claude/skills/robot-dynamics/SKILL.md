@@ -243,8 +243,10 @@ place ABA earns its keep.
 of theirs that defines `RD_SINCOS(x, sp, cp)` and/or `RD_SQRT(x)` and it
 displaces the portable version. Macros, not function pointers -- `rd_sincos()`
 runs once per revolute joint inside `rd_update_kinematics()`'s loop.
-`RobotDynamics/backends/rd_cordic_stm32g4.h` is the worked example, for the
-STM32G4/H7 CORDIC: **66 cycles a (sin, cos) pair against the polynomial's 83,
+**Nothing ships with the library** -- the release is one file with no vendor
+headers behind it, and a backend is the caller's to write and own.
+`examples/backends/rd_cordic_stm32g4.h` in the repository is a worked one to
+read, for the STM32G4/H7 CORDIC: **66 cycles a (sin, cos) pair against the polynomial's 83,
 and 1.7e-06 error against 8.2e-08** -- about four and a half of float32's
 twenty-four bits, for 2-3% off `update_kinematics` and 3-7% off `fk_frame`.
 Offer it only when the caller has said that error is below their encoder, and

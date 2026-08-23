@@ -66,10 +66,12 @@ extern "C" {
  * accelerators save, and it would also stop the compiler from keeping the
  * caller's values in registers across it.
  *
- *   #define RD_MATH_BACKEND "backends/rd_cordic_stm32g4.h"
+ *   #define RD_MATH_BACKEND "my_cordic.h"
  *
- * RobotDynamics/backends/ has one for the STM32G4 CORDIC. Write your own
- * against that file as a worked example -- it needs no vendor headers.
+ * Nothing of the sort ships with the library, deliberately -- a backend is
+ * yours to write and yours to own, and this is only the seam it hangs on.
+ * examples/backends/ in the repository has a worked one for the STM32G4
+ * CORDIC to read.
  */
 
 /* Compile the articulated-body algorithm (Default: 1).

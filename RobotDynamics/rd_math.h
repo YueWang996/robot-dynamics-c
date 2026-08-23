@@ -87,8 +87,8 @@ static RD_INLINE rd_real_t rd_sqrt(rd_real_t x) { return RD_SQRT(x); }
  * accuracy float32 can resolve.
  *
  * A part with a trigonometric accelerator can displace this entirely: see
- * RD_MATH_BACKEND in rd_config.h, and backends/rd_cordic_stm32g4.h for one
- * that trades four bits for 20% of the pair.
+ * RD_MATH_BACKEND in rd_config.h. examples/backends/ has a worked one for the
+ * STM32G4 CORDIC that trades four bits for 20% of the pair.
  *
  * RD_FAST_TRIG is on by default; set it to 0 for libm's results. A backend's
  * RD_SINCOS displaces both. */

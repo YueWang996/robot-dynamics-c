@@ -66,10 +66,12 @@ ifeq ($(SINGLE),1)
 endif
 
 # CORDIC=1 routes sin/cos to the G474's CORDIC coprocessor through the
-# RD_MATH_BACKEND hook. See RobotDynamics/backends/rd_cordic_stm32g4.h. The
-# quoting is what a header name has to survive to reach the preprocessor.
+# RD_MATH_BACKEND hook. The backend is not part of the library -- it lives in
+# examples/, which is why this has to add an include path for it. The quoting
+# is what a header name has to survive to reach the preprocessor.
 ifeq ($(CORDIC),1)
-  CFLAGS += -DBENCH_G4_CORDIC=1 '-DRD_MATH_BACKEND="backends/rd_cordic_stm32g4.h"'
+  CFLAGS += -DBENCH_G4_CORDIC=1 -I../../examples \
+            '-DRD_MATH_BACKEND="backends/rd_cordic_stm32g4.h"'
 endif
 
 # TRIG=1 checks rd_sincos against libm in double before the suite runs, and

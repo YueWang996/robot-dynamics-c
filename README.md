@@ -71,10 +71,11 @@ and include it plainly everywhere else.
 
 > [!TIP]
 > **A part with a math accelerator can use it.** `RD_MATH_BACKEND` names a
-> header of yours that defines `RD_SINCOS` and/or `RD_SQRT`, and it works the
-> same in the single-file build as in the tree — see
-> [`backends/`](RobotDynamics/backends/), which ships one for the STM32G4
-> CORDIC.
+> header of *yours* that defines `RD_SINCOS` and/or `RD_SQRT`, and it works the
+> same in the single-file build as in the tree. Nothing of the sort is bundled
+> — the download stays one file with no vendor headers behind it — but
+> [`examples/backends/`](examples/backends/) has a worked one for the STM32G4
+> CORDIC to read.
 
 ```c
 #include "robot_dynamics.h"
@@ -156,7 +157,7 @@ quietly:
 | `RD_SINGLE_PRECISION` | `ON` | `float` for `rd_real_t`; `OFF` gives `double` |
 | `RD_FAST_TRIG` | on | Polynomial `sin`/`cos`, 169 cycles a pair against libm's 521 at the same float32 accuracy — worth 45% of `update_kinematics` on Go2 |
 | `RD_ENABLE_ABA` | `ON` | The articulated-body algorithm. It is the only algorithm with per-node state of its own, so leaving it out takes a link from 70 floats of workspace to 45 and saves 13 KB of flash. `rd_forward_dynamics(RD_FD_CRBA)` still works |
-| `RD_MATH_BACKEND` | unset | A header of yours defining `RD_SINCOS` and/or `RD_SQRT`, so a part with a trigonometric accelerator can use it. [`backends/`](RobotDynamics/backends/) ships one for the STM32G4 CORDIC |
+| `RD_MATH_BACKEND` | unset | A header of yours defining `RD_SINCOS` and/or `RD_SQRT`, so a part with a math accelerator can use it. Bring your own; [`examples/backends/`](examples/backends/) has one for the STM32G4 CORDIC to work from |
 | `RD_CMSIS_DSP` | `OFF` | CMSIS-DSP `sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR` |
 | `RD_MAX_LINKS` / `RD_MAX_JOINTS` | 16 / 12 | Bound the static model storage. Go2 needs 31 links |
 | `RD_ENABLE_DEBUG` | `OFF` | Assertions and log output |
