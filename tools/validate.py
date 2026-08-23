@@ -82,7 +82,7 @@ def run_dump(binary, robot, payload):
             out[tag][int(f[1])] = np.array([float(x) for x in f[2:]])
         elif tag == "NAME":
             out["NAME"][int(f[1])] = f[2]
-        elif tag in ("TAU", "ACC", "QDD", "G", "NLE"):
+        elif tag in ("TAU", "ACC", "QDD", "G", "NLE", "TAUEXT", "QDDEXT"):
             out[tag] = np.array([float(x) for x in f[1:]])
         elif tag == "SHAPE":
             out["shape"] = tuple(int(x) for x in f[1:])
@@ -93,7 +93,7 @@ def run_dump(binary, robot, payload):
     return out
 
 
-def make_config(rng, nj, floating):
+def make_config(rng, nj, floating, n_nodes=0):
     """Velocity-space vectors are packed to nv, base first, matching the C API."""
     nv = nj + (6 if floating else 0)
     cfg = {}
@@ -111,6 +111,10 @@ def make_config(rng, nj, floating):
     cfg["armature"] = rng.uniform(0.01, 0.3, nv)
     if floating:
         cfg["armature"][:6] = 0.0
+    # A spatial force on every link, fixed ones included: those are folded into
+    # the moving link above them, and carrying them there is the part of f_ext
+    # most likely to be wrong.
+    cfg["f_ext"] = rng.uniform(-4.0, 4.0, (n_nodes, 6))
     return cfg
 
 
@@ -119,6 +123,7 @@ def payload_for(cfg, floating):
     if floating:
         parts += [*cfg["p"], *cfg["quat_wxyz"]]
     parts += [*cfg["q"], *cfg["qd"], *cfg["qdd"], *cfg["tau"], *cfg["armature"]]
+    parts += [float(x) for x in cfg["f_ext"].reshape(-1)]
     return " ".join(repr(float(x)) for x in parts) + "\n"
 
 
@@ -164,7 +169,22 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name, resolved):
         T[name] = data.oMf[fid].homogeneous
         V[name] = pin.getFrameVelocity(model, data, fid, pin.ReferenceFrame.WORLD).vector
 
-    tau = pin.rnea(model, data, q, v, a)
+    # f_ext, ours per link in the link frame, theirs per joint in the joint
+    # frame. A frame's placement carries one to the other, and several links can
+    # land on the same joint, so they accumulate.
+    fext = pin.StdVec_Force()
+    for _ in range(model.njoints):
+        fext.append(pin.Force.Zero())
+    for name, row in zip(link_names, cfg["f_ext"]):
+        if name not in resolved:
+            continue
+        fid = model.getFrameId(resolved[name])
+        fr = model.frames[fid]
+        if fr.parentJoint == 0:
+            continue                       # anchored to the world
+        fext[fr.parentJoint] += fr.placement.act(pin.Force(row[:3], row[3:]))
+
+    tau = pin.rnea(model, data, q, v, a).copy()
     M = pin.crba(model, data, q)
     M = np.triu(M) + np.triu(M, 1).T          # Pinocchio fills the upper triangle
 
@@ -174,11 +194,18 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name, resolved):
 
     acc = pin.getFrameAcceleration(model, data, fid, pin.ReferenceFrame.WORLD).vector
 
-    qdd_fd = pin.aba(model, data, q, v, tau_in)
+    qdd_fd = pin.aba(model, data, q, v, tau_in).copy()
     g = pin.computeGeneralizedGravity(model, data, q)
     nle = pin.nonLinearEffects(model, data, q, v)
 
+    # Last, and copied: rnea and aba hand back references into `data`, so these
+    # would otherwise alias tau and qdd_fd, and aba overwrites the data.a that
+    # `acc` is read from above.
+    tau_ext = pin.rnea(model, data, q, v, a, fext).copy()
+    qdd_ext = pin.aba(model, data, q, v, tau_in, fext).copy()
+
     return dict(T=T, V=V, tau=tau, M=M, JW=JW, JL=JL, acc=acc,
+                tau_ext=tau_ext, qdd_ext=qdd_ext,
                 qdd=qdd_fd, g=g, nle=nle, nv=model.nv)
 
 
@@ -226,7 +253,8 @@ def main():
 
         # One throwaway dump, to learn the C model's shape and link names.
         # Pinocchio's nv already tells us the joint count either way.
-        cfg0 = make_config(rng, model.nv - (6 if floating else 0), floating)
+        cfg0 = make_config(rng, model.nv - (6 if floating else 0), floating,
+                           len(model.frames))
         d0 = run_dump(binary, robot, payload_for(cfg0, floating))
         n, nj, nv, fb = d0["shape"]
         link_names = [d0["NAME"][i] for i in range(n)]
@@ -239,11 +267,11 @@ def main():
             continue
 
         worst = {k: 0.0 for k in ("T", "V", "tau", "qdd", "g", "nle",
-                                  "M", "JW", "JL", "acc")}
+                                  "M", "JW", "JL", "acc", "tauext", "qddext")}
         missing_frames = 0
 
         for s in range(args.samples):
-            cfg = make_config(rng, nj, floating)
+            cfg = make_config(rng, nj, floating, n)
             d = run_dump(binary, robot, payload_for(cfg, floating))
             ref = pin_quantities(model, data, cfg, floating, link_names, eef_name,
                                  resolved)
@@ -268,11 +296,16 @@ def main():
             JLc = np.array([d["JL"][r] for r in range(6)])
             worst["JL"] = max(worst["JL"], err(JLc, ref["JL"]))
             worst["acc"] = max(worst["acc"], err(d["ACC"], ref["acc"]))
+            if "TAUEXT" in d:
+                worst["tauext"] = max(worst["tauext"], err(d["TAUEXT"], ref["tau_ext"]))
+            if "QDDEXT" in d:
+                worst["qddext"] = max(worst["qddext"], err(d["QDDEXT"], ref["qdd_ext"]))
 
         print(f"{robot}  (C: {n} links / {nj} joints / nv {nv}"
               f"{', floating' if fb else ''}   "
               f"pinocchio: {model.njoints - 1} joints / nv {model.nv})")
-        for k in ("T", "V", "tau", "qdd", "g", "nle", "M", "JW", "JL", "acc"):
+        for k in ("T", "V", "tau", "qdd", "g", "nle", "M", "JW", "JL", "acc",
+                  "tauext", "qddext"):
             status = "ok  " if worst[k] <= tol else "FAIL"
             if worst[k] > tol:
                 grand_fail += 1

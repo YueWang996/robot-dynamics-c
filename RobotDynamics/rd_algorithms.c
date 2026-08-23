@@ -421,6 +421,46 @@ rd_status_t rd_spatial_acceleration(const rd_chain_t* chain,
  * ============================================================================ */
 
 /*
+ * Seed a per-node force array with -f_ext, gathered onto the dynamics tree.
+ *
+ * f_ext is indexed by node and expressed in each link's own body frame. A
+ * contact usually lands on a *fixed* link -- a foot, a fingertip, a sensor pad
+ * -- and rd_chain_build folded those into the moving node above them, so the
+ * force has to be carried there first. state->T_dyn holds a fixed node's pose
+ * in exactly that node, which is the transform this needs.
+ *
+ * The result is negated because the inward recursion carries
+ * f_i = I a_i + v x* I v_i - f_i^ext, and the caller adds its own terms on top
+ * of what this leaves behind. Links with no force cost six comparisons.
+ */
+static void algo_seed_fext(const rd_chain_t* chain, const rd_state_t* state,
+                           const rd_real_t* RD_RESTRICT f_ext,
+                           rd_real_t* RD_RESTRICT f) {
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        rd_zero(&f[chain->dyn[di].node * 6], 6);
+    }
+    for (rd_int_t nd = 0; nd < chain->n_nodes; ++nd) {
+        const rd_real_t* fe = &f_ext[nd * 6];
+        int any = 0;
+        for (int k = 0; k < 6; ++k) any |= (fe[k] != RD_REAL(0.0));
+        if (!any) continue;
+
+        const int own = rd_chain_node_is_dynamic(chain, (rd_idx_t)nd);
+        const rd_idx_t tgt = own ? (rd_idx_t)nd : chain->dyn_parent[nd];
+        if (tgt < 0) continue;          /* anchored to the world; the ground takes it */
+
+        rd_real_t neg[6];
+        for (int k = 0; k < 6; ++k) neg[k] = -fe[k];
+        if (own) {
+            for (int k = 0; k < 6; ++k) f[nd * 6 + k] += neg[k];
+        } else {
+            rd_spatial_transform_force_accum(&state->T_dyn[nd * 16], neg,
+                                             &f[tgt * 6]);
+        }
+    }
+}
+
+/*
  * Shared RNEA body. With use_velocity = 0 the cached link velocities are
  * treated as zero, which drops the Coriolis and bias terms and leaves
  * tau = M(q) qdd + g(q) -- that is how rd_gravity() gets g(q) without needing
@@ -525,6 +565,54 @@ rd_status_t rd_rnea(const rd_chain_t* chain, const rd_state_t* state,
     return rnea_impl(chain, state, qdd, gravity, 1, tau_out);
 }
 
+/*
+ * tau -= sum_i J_i^T f_ext_i, as an inward pass of its own.
+ *
+ * RNEA is linear in the external forces, so this is separable, and separating
+ * it is what keeps rd_rnea() exactly the function it was: threading f_ext
+ * through the main recursion put a test inside its inner loop and cost 4-5% of
+ * every call that passed NULL. Here nobody pays for it who does not use it.
+ *
+ * The recursion is the inward half of RNEA with the inertial terms dropped:
+ * each link's force is already in state->force from the seeding, children are
+ * carried into their parent, and the joint axes read off what is left.
+ */
+static void algo_fext_torque(const rd_chain_t* chain, const rd_state_t* state,
+                             const rd_real_t* f_ext, rd_real_t* tau_out) {
+    rd_real_t* f = state->force;
+    algo_seed_fext(chain, state, f_ext, f);
+
+    for (rd_int_t di = chain->n_dyn - 1; di >= 0; --di) {
+        const rd_idx_t node = chain->dyn[di].node;
+        const rd_int_t c0 = chain->dyn_child_start[node];
+        const rd_int_t c1 = chain->dyn_child_start[node + 1];
+        for (rd_int_t ci = c0; ci < c1; ++ci) {
+            const rd_idx_t child = chain->dyn_child[ci];
+            rd_spatial_transform_force_accum(&state->T_dyn[child*16],
+                                             &f[child*6], &f[node*6]);
+        }
+    }
+
+    if (chain->has_floating_base) {
+        const rd_idx_t root = chain->topo_order[0];
+        for (int k = 0; k < 6; ++k) tau_out[k] += f[root*6 + k];
+    }
+    for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
+        const rd_dyn_node_t* d = &chain->dyn[di];
+        if (d->vidx < 0) continue;
+        tau_out[d->vidx] += d->s_sign * f[d->node*6 + d->s_axis];
+    }
+}
+
+rd_status_t rd_rnea_ext(const rd_chain_t* chain, const rd_state_t* state,
+                        const rd_real_t* qdd, const rd_real_t* gravity,
+                        const rd_real_t* f_ext, rd_real_t* tau_out) {
+    rd_status_t st = rnea_impl(chain, state, qdd, gravity, 1, tau_out);
+    if (st != RD_OK || !f_ext) return st;
+    algo_fext_torque(chain, state, f_ext, tau_out);
+    return RD_OK;
+}
+
 /* ============================================================================
  * Forward dynamics, either way
  * ============================================================================ */
@@ -587,6 +675,23 @@ rd_status_t rd_coriolis(const rd_chain_t* chain, const rd_state_t* state,
                         rd_real_t* tau_out) {
     rd_real_t zero_g[3] = {RD_REAL(0.0), RD_REAL(0.0), RD_REAL(0.0)};
     return rnea_impl(chain, state, NULL, zero_g, 1, tau_out);
+}
+
+/*
+ * M's diagonal gains each joint's reflected rotor inertia: the rotor turns
+ * with its own joint and nothing else.
+ *
+ * Out of line, and behind a flag, because it is not free. Walking a diagonal
+ * of stride nv+1 costs 4% of rd_crba on Go2 and 5% on the G1 -- and merely
+ * *having* the loop inside rd_crba cost 2-4% on models where the flag is off
+ * and it never runs, since the function grows and rd_crba is fetch-bound at
+ * four flash wait states. A model with no rotor inertia, which is every URDF
+ * until someone sets one, now pays a load and a branch.
+ */
+static RD_NOINLINE void crba_add_armature(const rd_chain_t* chain,
+                                          rd_real_t* RD_RESTRICT M_out,
+                                          rd_int_t nv) {
+    for (rd_int_t vi = 0; vi < nv; ++vi) M_out[vi*nv + vi] += chain->armature[vi];
 }
 
 /* ============================================================================
@@ -660,9 +765,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
          */
         rd_real_t f_prop[6];
         rd_rbi_col(RD_IC(node), d->s_axis, d->s_sign, f_prop);
-        /* The rotor turns with the joint and nothing else, so its reflected
-         * inertia lands on the diagonal alone. */
-        M_out[col*nv + col] = d->s_sign * f_prop[d->s_axis] + chain->armature[col];
+        M_out[col*nv + col] = d->s_sign * f_prop[d->s_axis];
 
         const rd_dyn_node_t* dc = d;
         for (;;) {
@@ -686,6 +789,8 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
             }
         }
     }
+    if (chain->has_armature) crba_add_armature(chain, M_out, nv);
+
     #undef RD_IC
     return RD_OK;
 }
@@ -694,9 +799,9 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
  * Forward dynamics (Articulated Body Algorithm)
  * ============================================================================ */
 
-rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
-                   const rd_real_t* tau, const rd_real_t* gravity,
-                   rd_real_t* qdd_out) {
+static rd_status_t aba_impl(const rd_chain_t* chain, const rd_state_t* state,
+                            const rd_real_t* tau, const rd_real_t* gravity,
+                            const rd_real_t* f_ext, rd_real_t* qdd_out) {
     if (!chain || !state || !qdd_out) return RD_ERR_NULL_PTR;
 
     const rd_int_t nv = rd_chain_get_nv(chain);
@@ -714,6 +819,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
     rd_real_t* a  = state->accel;
 
     rd_zero(qdd_out, nv);
+    if (f_ext) algo_seed_fext(chain, state, f_ext, pA);
 
     /* --- Pass 1 (outward): bias forces and velocity-product accelerations -- */
     for (rd_int_t di = 0; di < chain->n_dyn; ++di) {
@@ -730,7 +836,14 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
         rd_real_t Iv[6];
         rd_spatial_inertia_mul(&chain->inertia_compact[node*RD_INERTIA_COMPACT_LEN],
                                v_i, Iv);
-        rd_spatial_cross_force(v_i, Iv, &pA[node*6]);
+        if (f_ext) {
+            /* pA already holds -f_ext for this node. */
+            rd_real_t bias[6];
+            rd_spatial_cross_force(v_i, Iv, bias);
+            for (int k = 0; k < 6; ++k) pA[node*6 + k] += bias[k];
+        } else {
+            rd_spatial_cross_force(v_i, Iv, &pA[node*6]);
+        }
     }
 
     /* --- Pass 2 (inward): articulate the inertias -------------------------- */
@@ -846,4 +959,16 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
     #undef RD_IA
     return RD_OK;
+}
+
+rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
+                   const rd_real_t* tau, const rd_real_t* gravity,
+                   rd_real_t* qdd_out) {
+    return aba_impl(chain, state, tau, gravity, NULL, qdd_out);
+}
+
+rd_status_t rd_aba_ext(const rd_chain_t* chain, const rd_state_t* state,
+                       const rd_real_t* tau, const rd_real_t* gravity,
+                       const rd_real_t* f_ext, rd_real_t* qdd_out) {
+    return aba_impl(chain, state, tau, gravity, f_ext, qdd_out);
 }

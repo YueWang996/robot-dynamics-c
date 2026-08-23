@@ -61,10 +61,6 @@ typedef struct {
     /* Joint axes (n_joints x 3) */
     rd_real_t* axes;               /**< Row-major, size n_joints*3 */
 
-    rd_real_t* armature;           /**< nv, reflected rotor inertia per velocity
-                                    *   index. Zero for a floating base's six.
-                                    *   Writable: see rd_chain_set_armature. */
-
     /* Transforms (4x4, column-major). There is deliberately no separate link
      * offset: the link frame is the joint's child frame, so one would always be
      * the identity, and composing against it cost a 4x4 multiply per node per
@@ -125,6 +121,18 @@ typedef struct {
     rd_dyn_node_t* dyn;            /**< n_dyn, in dyn_order */
     rd_idx_t*      dyn_slot;       /**< n_nodes, node -> index into dyn, or -1 */
 
+
+    /* Last on purpose. Everything above it is read by the hot traversals, and
+     * moving their offsets was worth 4% of rd_crba on a part whose data cache
+     * is 128 bytes -- measured, twice. A field nobody reads per node belongs
+     * where it cannot disturb the ones that are. */
+    rd_real_t* armature;           /**< nv, reflected rotor inertia per velocity
+                                    *   index. Zero for a floating base's six.
+                                    *   Writable: see rd_chain_set_armature. */
+    rd_int_t   has_armature;       /**< Whether any of it is non-zero. Walking
+                                    *   the mass matrix diagonal to add it costs
+                                    *   3-5% of rd_crba, measured, so a model
+                                    *   without rotor inertia skips it. */
 } rd_chain_t;
 
 /** Does this node carry a degree of freedom (or is it the root)? */

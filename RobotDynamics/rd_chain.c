@@ -28,6 +28,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     rd_int_t n = (rd_int_t)model->num_links;
     rd_int_t nj = (rd_int_t)model->num_joints;
     
+    chain->has_armature = 0;
     chain->n_nodes = n;
     chain->n_joints = nj;
     chain->has_floating_base = (rd_int_t)model->use_floating_base;
@@ -91,6 +92,7 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
             chain->axes[joint_counter*3 + 2] = v[2];
             chain->armature[joint_counter + (model->use_floating_base ? 6 : 0)] =
                 L->joint.armature;
+            if (L->joint.armature != RD_REAL(0.0)) chain->has_armature = 1;
             joint_counter++;
         } else {
             chain->joint_idx[i] = -1;
@@ -424,6 +426,7 @@ rd_status_t rd_chain_set_armature(rd_chain_t* chain, rd_int_t vidx,
     if (!chain || !chain->armature) return RD_ERR_NULL_PTR;
     if (vidx < 0 || vidx >= rd_chain_get_nv(chain)) return RD_ERR_INVALID_INDEX;
     chain->armature[vidx] = value;
+    if (value != RD_REAL(0.0)) chain->has_armature = 1;
     return RD_OK;
 }
 

@@ -104,6 +104,44 @@ rd_status_t rd_rnea(const rd_chain_t* chain,
                     const rd_real_t* gravity,
                     rd_real_t* tau_out);
 
+
+/* ----------------------------------------------------------------------------
+ * External forces
+ *
+ * `f_ext` is [6*n_nodes] or NULL, one spatial force per *node* -- the same
+ * indexing rd_forward_kinematics() uses, not the velocity indexing of tau --
+ * ordered [linear, angular] and expressed in that link's own body frame. It is
+ * the force the world applies to the link.
+ *
+ * Indexing by node is what lets a contact sit where it physically does. Feet,
+ * fingertips and sensor pads are usually *fixed* links, which rd_chain_build
+ * folds into the moving link above them; a force placed on one is carried to
+ * that link automatically, so callers do not have to know which links survived
+ * the folding.
+ *
+ * To turn a world-frame contact force into an entry: rotate it by the
+ * transpose of the link's world rotation, which rd_forward_kinematics() gives.
+ * Links with no force cost six comparisons each, and passing NULL costs
+ * nothing at all.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * @brief Inverse dynamics with external forces:
+ *        tau = M qdd + C qd + g - sum_i J_i^T f_ext_i.
+ *
+ * The subtraction happens inside the O(n) recursion, so contacts cost a few
+ * additions rather than a Jacobian and a 6xnv product per contact.
+ *
+ * @param qdd   [nv] or NULL for zero acceleration.
+ * @param f_ext [6*n_nodes] or NULL. See above.
+ */
+rd_status_t rd_rnea_ext(const rd_chain_t* chain,
+                        const rd_state_t* state,
+                        const rd_real_t* qdd,
+                        const rd_real_t* gravity,
+                        const rd_real_t* f_ext,
+                        rd_real_t* tau_out);
+
 /**
  * @brief Forward dynamics: qdd = M(q)^-1 (tau - C(q,qd) qd - g(q)).
  *
@@ -122,6 +160,19 @@ rd_status_t rd_aba(const rd_chain_t* chain,
                    const rd_real_t* tau,
                    const rd_real_t* gravity,
                    rd_real_t* qdd_out);
+
+/**
+ * @brief Forward dynamics with external forces.
+ *
+ * The same recursion, with each link's external force entering its bias force.
+ * @param f_ext [6*n_nodes] or NULL. See the note above rd_rnea_ext().
+ */
+rd_status_t rd_aba_ext(const rd_chain_t* chain,
+                       const rd_state_t* state,
+                       const rd_real_t* tau,
+                       const rd_real_t* gravity,
+                       const rd_real_t* f_ext,
+                       rd_real_t* qdd_out);
 
 /** @brief Joint-space mass matrix M(q). @param M_out [nv*nv] row-major. */
 rd_status_t rd_crba(const rd_chain_t* chain,

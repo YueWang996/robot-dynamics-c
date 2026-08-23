@@ -36,6 +36,7 @@ static rd_real_t  state_buf[RD_STATE_BUF_FLOATS(MAXN)];
 
 static rd_real_t q_base[7], q_joints[MAXNV];
 static rd_real_t qd[MAXNV], qdd[MAXNV], tau_in[MAXNV], armature[MAXNV];
+static rd_real_t f_ext[6 * MAXN], tau_ext[MAXNV], qdd_ext[MAXNV];
 static rd_real_t M[MAXNV * MAXNV], J[6 * MAXNV], tau[MAXNV], qdd_fd[MAXNV];
 
 static void rd(rd_real_t* dst, int n) {
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
     if (fb) rd(q_base, 7);
     rd(q_joints, nj);
     rd(qd, nv); rd(qdd, nv); rd(tau_in, nv); rd(armature, nv);
+    rd(f_ext, 6 * n);
 
     /* Reflected rotor inertia, exercised on every run so that a mistake in it
      * cannot hide behind a zero. */
@@ -99,6 +101,15 @@ int main(int argc, char** argv) {
         rd_real_t v[6];
         rd_spatial_velocity(&chain, &state, (rd_idx_t)i, RD_FRAME_WORLD, v);
         emit("V", i, v, 6);
+    }
+
+    /* External forces, on every link including the fixed ones the chain folded
+     * away -- that path is the one worth checking. */
+    if (rd_rnea_ext(&chain, &state, qdd, NULL, f_ext, tau_ext) == RD_OK) {
+        emit("TAUEXT", -1, tau_ext, nv);
+    }
+    if (rd_aba_ext(&chain, &state, tau_in, NULL, f_ext, qdd_ext) == RD_OK) {
+        emit("QDDEXT", -1, qdd_ext, nv);
     }
 
     rd_rnea(&chain, &state, qdd, NULL, tau);

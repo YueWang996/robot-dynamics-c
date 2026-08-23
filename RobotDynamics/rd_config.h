@@ -136,11 +136,13 @@ typedef int16_t  rd_idx_t;   /* Index type for arrays */
 
 #if defined(__GNUC__) || defined(__clang__)
     #define RD_INLINE       inline __attribute__((always_inline))
+    #define RD_NOINLINE     __attribute__((noinline))
     #define RD_HOT          __attribute__((hot))
     #define RD_PURE         __attribute__((const))
     #define RD_RESTRICT     __restrict__
 #else
     #define RD_INLINE       inline
+    #define RD_NOINLINE
     #define RD_HOT
     #define RD_PURE
     #define RD_RESTRICT
