@@ -481,13 +481,19 @@ static void algo_seed_fext(const rd_chain_t* chain, const rd_state_t* state,
  * treated as zero, which drops the Coriolis and bias terms and leaves
  * tau = M(q) qdd + g(q) -- that is how rd_gravity() gets g(q) without needing
  * a second rd_update_kinematics() at qd = 0.
+ *
+ * Always inlined, and called from exactly two places with a literal, so the
+ * two recursions are compiled separately and neither carries a test the other
+ * needs. rd_gravity() is a control-tick call in its own right, and the flag it
+ * passes turns into six adds of a zeroed vector per link if it stays a
+ * variable.
  */
-static rd_status_t rnea_impl(const rd_chain_t* chain,
-                             const rd_state_t* state,
-                             const rd_real_t* qdd,
-                             const rd_real_t* gravity,
-                             int use_velocity,
-                             rd_real_t* tau_out) {
+static RD_INLINE rd_status_t rnea_body(const rd_chain_t* chain,
+                                       const rd_state_t* state,
+                                       const rd_real_t* qdd,
+                                       const rd_real_t* gravity,
+                                       int use_velocity,
+                                       rd_real_t* tau_out) {
     if (!chain || !state || !tau_out) return RD_ERR_NULL_PTR;
 
     const rd_int_t nv = rd_chain_get_nv(chain);
@@ -575,10 +581,24 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
     return RD_OK;
 }
 
+/* The two the flag selects, each compiled on its own so that neither carries
+ * a test only the other needs. */
+static RD_NOINLINE rd_status_t rnea_with_velocity(
+        const rd_chain_t* chain, const rd_state_t* state, const rd_real_t* qdd,
+        const rd_real_t* gravity, rd_real_t* tau_out) {
+    return rnea_body(chain, state, qdd, gravity, 1, tau_out);
+}
+
+static RD_NOINLINE rd_status_t rnea_no_velocity(
+        const rd_chain_t* chain, const rd_state_t* state, const rd_real_t* qdd,
+        const rd_real_t* gravity, rd_real_t* tau_out) {
+    return rnea_body(chain, state, qdd, gravity, 0, tau_out);
+}
+
 rd_status_t rd_rnea(const rd_chain_t* chain, const rd_state_t* state,
                     const rd_real_t* qdd, const rd_real_t* gravity,
                     rd_real_t* tau_out) {
-    return rnea_impl(chain, state, qdd, gravity, 1, tau_out);
+    return rnea_with_velocity(chain, state, qdd, gravity, tau_out);
 }
 
 /*
@@ -623,7 +643,7 @@ static void algo_fext_torque(const rd_chain_t* chain, const rd_state_t* state,
 rd_status_t rd_rnea_ext(const rd_chain_t* chain, const rd_state_t* state,
                         const rd_real_t* qdd, const rd_real_t* gravity,
                         const rd_real_t* f_ext, rd_real_t* tau_out) {
-    rd_status_t st = rnea_impl(chain, state, qdd, gravity, 1, tau_out);
+    rd_status_t st = rnea_with_velocity(chain, state, qdd, gravity, tau_out);
     if (st != RD_OK || !f_ext) return st;
     algo_fext_torque(chain, state, f_ext, tau_out);
     return RD_OK;
@@ -683,18 +703,18 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
 
 rd_status_t rd_gravity(const rd_chain_t* chain, const rd_state_t* state,
                        const rd_real_t* gravity, rd_real_t* tau_out) {
-    return rnea_impl(chain, state, NULL, gravity, 0, tau_out);
+    return rnea_no_velocity(chain, state, NULL, gravity, tau_out);
 }
 
 rd_status_t rd_nonlinear_terms(const rd_chain_t* chain, const rd_state_t* state,
                                const rd_real_t* gravity, rd_real_t* tau_out) {
-    return rnea_impl(chain, state, NULL, gravity, 1, tau_out);
+    return rnea_with_velocity(chain, state, NULL, gravity, tau_out);
 }
 
 rd_status_t rd_coriolis(const rd_chain_t* chain, const rd_state_t* state,
                         rd_real_t* tau_out) {
     rd_real_t zero_g[3] = {RD_REAL(0.0), RD_REAL(0.0), RD_REAL(0.0)};
-    return rnea_impl(chain, state, NULL, zero_g, 1, tau_out);
+    return rnea_with_velocity(chain, state, NULL, zero_g, tau_out);
 }
 
 /*
