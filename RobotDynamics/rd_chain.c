@@ -98,11 +98,27 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
             chain->joint_idx[i] = -1;
         }
         
-        /* Build joint offset transform */
+        /* Build joint offset transform.
+         *
+         * A zero rpy is written as the identity rather than run through
+         * rd_rot_rpy(). It is the common case in a URDF, and the exact
+         * comparison further down -- the one that decides whether a joint gets
+         * the axis-aligned congruence in rd_crba() and rd_aba() -- must depend
+         * on the model and not on how accurate the sin/cos backend happens to
+         * be. Swapping RD_MATH_BACKEND for the STM32G4 CORDIC costs about four
+         * bits, and without this every zero-rpy joint quietly lost its fast
+         * path: Go2's ABA slowed 14% and its CRBA 9%, on a change that was
+         * supposed to touch only rd_update_kinematics. */
         rd_real_t R[9];
-        rd_rot_rpy((rd_real_t)L->rpy_parent.x, 
-                   (rd_real_t)L->rpy_parent.y, 
-                   (rd_real_t)L->rpy_parent.z, R);
+        if (L->rpy_parent.x == 0.0 && L->rpy_parent.y == 0.0 &&
+            L->rpy_parent.z == 0.0) {
+            R[0] = R[4] = R[8] = RD_REAL(1.0);
+            R[1] = R[2] = R[3] = R[5] = R[6] = R[7] = RD_REAL(0.0);
+        } else {
+            rd_rot_rpy((rd_real_t)L->rpy_parent.x,
+                       (rd_real_t)L->rpy_parent.y,
+                       (rd_real_t)L->rpy_parent.z, R);
+        }
         rd_real_t t[3] = {
             (rd_real_t)L->pos_parent.x,
             (rd_real_t)L->pos_parent.y,
