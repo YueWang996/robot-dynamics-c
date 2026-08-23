@@ -42,10 +42,17 @@ extern "C" {
 
 /**
  * Floats of workspace per link. Cache is 23 (one 4x4 transform, a spatial
- * velocity, a joint velocity); scratch is 47, sized by the largest consumer,
- * which is rd_aba().
+ * velocity, a joint velocity); scratch is the rest, sized by the largest
+ * consumer.
+ *
+ * That consumer is rd_aba(), and it is the only one, so RD_ENABLE_ABA=0 takes
+ * a link from 70 floats to 45. See rd_config.h.
  */
-#define RD_STATE_FLOATS_PER_NODE  70
+#if RD_ENABLE_ABA
+    #define RD_STATE_FLOATS_PER_NODE  70
+#else
+    #define RD_STATE_FLOATS_PER_NODE  45
+#endif
 
 /** Elements to declare for a statically sized state buffer. */
 #define RD_STATE_BUF_FLOATS(n)    ((n) * RD_STATE_FLOATS_PER_NODE + 16)
@@ -81,13 +88,17 @@ typedef struct {
     rd_real_t* inertia;           /**< 21*n, ABA's articulated-body inertia,
                                    *   symmetric so 21 numbers rather than 36.
                                    *   CRBA's composite is a rigid body and
-                                   *   takes the first ten of each slot. */
+                                   *   takes the first ten of each slot, which
+                                   *   is all that is allocated when ABA is
+                                   *   compiled out. */
     rd_real_t* accel;             /**< 6*n,  RNEA and ABA link accelerations */
     rd_real_t* force;             /**< 6*n,  RNEA forces / ABA bias forces */
+#if RD_ENABLE_ABA
     rd_real_t* cvp;               /**< 6*n,  ABA velocity-product accelerations */
     rd_real_t* U;                 /**< 6*n,  ABA */
     rd_real_t* D;                 /**< n,    ABA */
     rd_real_t* u;                 /**< n,    ABA */
+#endif
 
     rd_int_t n_nodes;
 

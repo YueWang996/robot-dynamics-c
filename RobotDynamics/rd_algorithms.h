@@ -155,6 +155,7 @@ rd_status_t rd_rnea_ext(const rd_chain_t* chain,
  * @return RD_ERR_SINGULAR if the articulated body inertia is not positive
  *         definite, which means the model has a zero-inertia moving link.
  */
+#if RD_ENABLE_ABA
 rd_status_t rd_aba(const rd_chain_t* chain,
                    const rd_state_t* state,
                    const rd_real_t* tau,
@@ -173,6 +174,7 @@ rd_status_t rd_aba_ext(const rd_chain_t* chain,
                        const rd_real_t* gravity,
                        const rd_real_t* f_ext,
                        rd_real_t* qdd_out);
+#endif /* RD_ENABLE_ABA */
 
 /* ============================================================================
  * Linear algebra
@@ -226,6 +228,11 @@ rd_status_t rd_crba(const rd_chain_t* chain,
  *                the model sizes a microcontroller runs it is usually the
  *                faster of the two. It also hands you M and h, which an
  *                operational-space controller wants anyway.
+ *
+ * ABA is also what sizes rd_state_t -- it is the only algorithm with per-node
+ * state of its own -- so a build that has settled on RD_FD_CRBA can set
+ * RD_ENABLE_ABA=0 and get 25 floats per link back. rd_forward_dynamics() then
+ * answers RD_ERR_INVALID_INDEX to RD_FD_ABA.
  *
  * Measured on an STM32L413, forward dynamics = update_kinematics + the method:
  *

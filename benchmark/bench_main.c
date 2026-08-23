@@ -202,12 +202,14 @@ static rd_status_t case_rnea(const rd_chain_t* c, const rd_state_t* s, rd_idx_t 
     return st;
 }
 
+#if RD_ENABLE_ABA
 static rd_status_t case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
     rd_status_t st = rd_aba(c, s, g_tau_in, NULL, g_qdd_out);
     g_checksum += g_qdd_out[0];
     return st;
 }
+#endif
 
 /* The other forward dynamics: build M(q) and h(q,qd), then factorise. Sized
  * for the largest model the suite carries. */
@@ -275,7 +277,9 @@ static const bench_case_t g_cases[] = {
     { "jacobian_world",     case_jacobian,          1, "cached" },
     { "jacobian_local",     case_jacobian_local,    1, "cached, adds a 6xnv reference-frame change" },
     { "rnea",               case_rnea,              1, "inverse dynamics" },
+#if RD_ENABLE_ABA
     { "aba",                case_aba,               1, "forward dynamics" },
+#endif
     { "fd_crba",            case_fd_crba,           1, "forward dynamics, M + Cholesky" },
     { "crba",               case_crba,              1, "cached, joint-space mass matrix" },
     { "gravity_comp",       case_gravity,           1, "cached, RNEA with qdd=0" },

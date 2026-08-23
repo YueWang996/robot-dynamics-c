@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 option(RD_SINGLE_PRECISION "Use single precision (float)" ON)
 option(RD_CMSIS_DSP "Enable ARM CMSIS-DSP" OFF)
 option(RD_FAST_TRIG "Polynomial sin/cos instead of libm" OFF)
+option(RD_ENABLE_ABA "Compile the articulated-body algorithm" ON)
 option(RD_STATIC_ALLOC "Use static memory allocation" OFF)
 option(RD_OPTIMIZE_SIZE "Optimize for size (-Os)" OFF)
 option(RD_ENABLE_DEBUG "Enable debug logging" OFF)
@@ -36,6 +37,12 @@ endif()
 
 if(RD_FAST_TRIG)
     target_compile_definitions(robot_dynamics PUBLIC RD_FAST_TRIG=1)
+endif()
+
+# PUBLIC because it changes rd_state_t's layout: every translation unit that
+# includes the headers has to agree with the one that allocated the buffer.
+if(NOT RD_ENABLE_ABA)
+    target_compile_definitions(robot_dynamics PUBLIC RD_ENABLE_ABA=0)
 endif()
 
 # CMSIS-DSP Configuration

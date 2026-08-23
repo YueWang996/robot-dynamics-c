@@ -165,9 +165,11 @@ static int algo_solve_spd(rd_real_t* RD_RESTRICT L, const rd_real_t* RD_RESTRICT
     return 0;
 }
 
+#if RD_ENABLE_ABA
 /*
  * The floating base's 6x6 block. Same factorisation, with the outer loop
- * written out so that every trip count below it is a literal.
+ * written out so that every trip count below it is a literal. rd_aba()'s root
+ * solve is the only caller, so it goes with it.
  *
  * That is the whole point: GCC will not peel this nest on its own -- its
  * budget for complete unrolling is 200 instructions and the nest needs about
@@ -213,6 +215,7 @@ static int algo_solve6_spd(rd_real_t L[36], const rd_real_t b[6], rd_real_t x[6]
 }
 
 #undef RD_CHOL6_
+#endif /* RD_ENABLE_ABA */
 
 /* ============================================================================
  * Kinematics
@@ -644,7 +647,11 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
                                 rd_real_t* work,
                                 rd_real_t* qdd_out) {
     if (!chain || !state || !qdd_out) return RD_ERR_NULL_PTR;
+#if RD_ENABLE_ABA
     if (method == RD_FD_ABA) return rd_aba(chain, state, tau, gravity, qdd_out);
+#endif
+    /* RD_FD_ABA lands here when it is compiled out, and is rejected with
+     * every other value that is not a method. */
     if (method != RD_FD_CRBA) return RD_ERR_INVALID_INDEX;
     if (!work) return RD_ERR_NULL_PTR;
 
@@ -811,6 +818,7 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
 /* ============================================================================
  * Forward dynamics (Articulated Body Algorithm)
  * ============================================================================ */
+#if RD_ENABLE_ABA
 
 static rd_status_t aba_impl(const rd_chain_t* chain, const rd_state_t* state,
                             const rd_real_t* tau, const rd_real_t* gravity,
@@ -985,3 +993,5 @@ rd_status_t rd_aba_ext(const rd_chain_t* chain, const rd_state_t* state,
                        const rd_real_t* f_ext, rd_real_t* qdd_out) {
     return aba_impl(chain, state, tau, gravity, f_ext, qdd_out);
 }
+
+#endif /* RD_ENABLE_ABA */

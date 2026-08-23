@@ -300,7 +300,8 @@ def verify(header_path):
 
         warn = ["-std=c99", "-pedantic", "-Wall", "-Wextra"]
         for label, extra in (("float32", []),
-                             ("float64", ["-DRD_USE_SINGLE_PRECISION=0", "-DRD_FAST_TRIG=0"])):
+                             ("float64", ["-DRD_USE_SINGLE_PRECISION=0", "-DRD_FAST_TRIG=0"]),
+                             ("no-ABA", ["-DRD_ENABLE_ABA=0"])):
             exe = tmp / f"t_{label}"
             run([cc, "-O2", *warn, *extra, "-I", tmp, ROOT / "test_main.c",
                  tmp / "impl.c", tmp / "user.c", "-lm", "-o", exe])

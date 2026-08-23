@@ -56,7 +56,10 @@ static void print_vec(const char* name, const rd_real_t* v, int n) {
 static rd_real_t state_buf[RD_STATE_BUF_FLOATS(RD_MAX_LINKS)];
 static rd_real_t J[6 * MAXNV];
 static rd_real_t M[MAXNV * MAXNV];
-static rd_real_t tau[MAXNV], tau_b[MAXNV], qdd_fd[MAXNV], tau_rt[MAXNV];
+static rd_real_t tau[MAXNV], tau_b[MAXNV];
+#if RD_ENABLE_ABA
+static rd_real_t qdd_fd[MAXNV], tau_rt[MAXNV];
+#endif
 
 int main(void) {
     printf("=== RobotDynamics smoke test ===\n\n");
@@ -200,6 +203,7 @@ int main(void) {
     printf("\n");
 
     /* ---- Forward dynamics ------------------------------------------------ */
+#if RD_ENABLE_ABA
     printf("--- Forward dynamics (ABA) ---\n");
     rd_rnea(&chain, &state, qdd, NULL, tau);
     rd_status_t st = rd_aba(&chain, &state, tau, NULL, qdd_fd);
@@ -225,11 +229,17 @@ int main(void) {
         printf("max |rnea(aba(tau)) - tau| = %.3e\n", (double)worst_tau);
         check(worst_tau < RD_REAL(1e-3), "RNEA and ABA are mutual inverses");
     }
+#else
+    printf("--- Forward dynamics (CRBA only, RD_ENABLE_ABA=0) ---\n");
+    rd_rnea(&chain, &state, qdd, NULL, tau);
+#endif
 
     /* The two forward-dynamics recursions are different arithmetic reaching
      * the same qdd: ABA propagates articulated inertias, RD_FD_CRBA builds the
      * mass matrix and factorises it. Agreement is the check that neither has
-     * drifted. */
+     * drifted. Without ABA compiled in, the CRBA path still has to reproduce
+     * the qdd that RNEA was handed, and RD_FD_ABA has to be refused rather
+     * than silently answered. */
     {
         rd_int_t nw = rd_forward_dynamics_work(&chain, RD_FD_CRBA);
         static rd_real_t work[(6 + RD_MAX_JOINTS) * (6 + RD_MAX_JOINTS) + 6 + RD_MAX_JOINTS];
@@ -240,15 +250,24 @@ int main(void) {
                                              RD_FD_ABA, NULL, qdd_aba);
         rd_status_t sc = rd_forward_dynamics(&chain, &state, tau, NULL,
                                              RD_FD_CRBA, work, qdd_crba);
+#if RD_ENABLE_ABA
         check(sa == RD_OK && sc == RD_OK, "both forward-dynamics methods succeeded");
+        const rd_real_t* reference = qdd_aba;
+        const char* what = "ABA and the CRBA solve agree";
+#else
+        check(sa == RD_ERR_INVALID_INDEX, "RD_FD_ABA is refused when it is compiled out");
+        check(sc == RD_OK, "the CRBA solve succeeded");
+        const rd_real_t* reference = qdd;
+        const char* what = "the CRBA solve recovers the qdd that RNEA was given";
+#endif
 
         rd_real_t worst = RD_REAL(0.0);
         for (rd_int_t i = 0; i < nv; ++i) {
-            rd_real_t e = rd_fabs(qdd_aba[i] - qdd_crba[i]);
+            rd_real_t e = rd_fabs(reference[i] - qdd_crba[i]);
             if (e > worst) worst = e;
         }
-        printf("max |qdd_aba - qdd_crba| = %.3e\n", (double)worst);
-        check(worst < RD_REAL(1e-3), "ABA and the CRBA solve agree");
+        printf("max |qdd_ref - qdd_crba| = %.3e\n", (double)worst);
+        check(worst < RD_REAL(1e-3), what);
     }
     printf("\n");
 

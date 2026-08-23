@@ -228,6 +228,17 @@ floating base gives the mass matrix no sparsity, but ABA's congruence has a
 fast path for joints whose origin carries no rotation, which xarm7's quarter
 turns miss and most URDFs hit. Tell people to measure their own model.
 
+**`RD_ENABLE_ABA=0` for a build that has picked CRBA.** ABA is the only
+algorithm carrying per-node state of its own -- an articulated inertia, a
+velocity-product acceleration, and U/D/u -- so it sets the size of
+`rd_state_t`. Without it a link costs 45 floats of workspace instead of 70,
+and `rd_algorithms` sheds 13 KB of flash. Measured on the G474 with function
+alignment pinned, nothing else moves: mean 0.23% across all remaining rows,
+which is inside the noise floor. `rd_aba`/`rd_aba_ext` stop being declared and
+`rd_forward_dynamics` answers `RD_ERR_INVALID_INDEX` to `RD_FD_ABA`. Do not
+suggest it to anyone doing contact or constrained dynamics -- that is the one
+place ABA earns its keep.
+
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly

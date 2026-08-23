@@ -148,6 +148,7 @@ quietly:
 |---|---|---|
 | `RD_SINGLE_PRECISION` | `ON` | `float` for `rd_real_t`; `OFF` gives `double` |
 | `RD_FAST_TRIG` | on | Polynomial `sin`/`cos`, 169 cycles a pair against libm's 521 at the same float32 accuracy — worth 45% of `update_kinematics` on Go2 |
+| `RD_ENABLE_ABA` | `ON` | The articulated-body algorithm. It is the only algorithm with per-node state of its own, so leaving it out takes a link from 70 floats of workspace to 45 and saves 13 KB of flash. `rd_forward_dynamics(RD_FD_CRBA)` still works |
 | `RD_CMSIS_DSP` | `OFF` | CMSIS-DSP `sqrt`; needs `RD_CMSIS_DSP_INCLUDE_DIR` |
 | `RD_MAX_LINKS` / `RD_MAX_JOINTS` | 16 / 12 | Bound the static model storage. Go2 needs 31 links |
 | `RD_ENABLE_DEBUG` | `OFF` | Assertions and log output |

@@ -48,6 +48,23 @@ extern "C" {
     #define RD_FAST_TRIG  1
 #endif
 
+/* Compile the articulated-body algorithm (Default: 1).
+ *
+ * ABA is the only algorithm here that carries per-node state of its own -- an
+ * articulated inertia, a velocity-product acceleration, and the U/D/u triple
+ * its outward pass needs -- so it is what sizes rd_state_t. With it, a link
+ * costs 70 floats of workspace; without it, 45. On a 40-link model in a
+ * float32 build that is 11,264 bytes against 7,264.
+ *
+ * Set to 0 in a build whose forward dynamics comes from
+ * rd_forward_dynamics(RD_FD_CRBA), which is the faster of the two on most
+ * models a microcontroller runs, or in one that only needs inverse dynamics.
+ * rd_aba() and rd_aba_ext() are then not declared, and rd_forward_dynamics()
+ * answers RD_ERR_INVALID_INDEX to RD_FD_ABA. */
+#ifndef RD_ENABLE_ABA
+    #define RD_ENABLE_ABA  1
+#endif
+
 /* Use ARM CMSIS-DSP library for matrix operations (Default: 0) */
 #ifndef RD_USE_CMSIS_DSP
     #define RD_USE_CMSIS_DSP  0

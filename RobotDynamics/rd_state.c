@@ -19,12 +19,22 @@ static void state_base_transform(const rd_real_t* q_base, rd_real_t T[16]) {
     rd_rot_to_mat4(R, q_base, T);
 }
 
+/* ABA's articulated inertia is symmetric, so 21 numbers; CRBA's composite is a
+ * rigid body, so ten. Whichever is compiled sets the stride. */
+#if RD_ENABLE_ABA
+    #define RD_STATE_N_INERTIA  RD_ABI_LEN
+    #define RD_STATE_N_ABA      (6 + 6 + 1 + 1)   /* cvp, U, D, u */
+#else
+    #define RD_STATE_N_INERTIA  RD_INERTIA_COMPACT_LEN
+    #define RD_STATE_N_ABA      0
+#endif
+
 /* The carve-up in rd_state_init() and RD_STATE_FLOATS_PER_NODE have to agree.
  * They are not checkable at run time -- every field lives in the one caller
  * buffer, so a field added without bumping the constant writes over its
  * neighbour rather than off the end, and no sanitiser sees a thing. */
 typedef char rd_state_layout_check[
-    (16 + 6 + 1 + RD_ABI_LEN + 6 + 6 + 6 + 6 + 1 + 1
+    (16 + 6 + 1 + RD_STATE_N_INERTIA + 6 + 6 + RD_STATE_N_ABA
      == RD_STATE_FLOATS_PER_NODE) ? 1 : -1];
 
 size_t rd_state_buffer_size(rd_int_t n) {
@@ -49,13 +59,15 @@ rd_status_t rd_state_init(rd_state_t* state, rd_int_t n,
     state->v                 = buf + off; off += (size_t)n * 6;
     state->vj                = buf + off; off += (size_t)n;
 
-    state->inertia           = buf + off; off += (size_t)n * RD_ABI_LEN;
+    state->inertia           = buf + off; off += (size_t)n * RD_STATE_N_INERTIA;
     state->accel             = buf + off; off += (size_t)n * 6;
     state->force             = buf + off; off += (size_t)n * 6;
+#if RD_ENABLE_ABA
     state->cvp               = buf + off; off += (size_t)n * 6;
     state->U                 = buf + off; off += (size_t)n * 6;
     state->D                 = buf + off; off += (size_t)n;
     state->u                 = buf + off; off += (size_t)n;
+#endif
 
     return RD_OK;
 }
