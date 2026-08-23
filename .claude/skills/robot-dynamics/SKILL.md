@@ -199,20 +199,20 @@ STM32G474, one Arm Cortex-M4F at 170 MHz, single precision, µs/call:
 
 | | spine (9 dof) | xarm7 (7 dof) | go2 (18 dof, 31 links) | g1 (35 dof, 40 links) |
 |---|---|---|---|---|
-| `update_kinematics` | 10.6 | 17.8 | 27.1 | 59.4 |
-| `rnea` | 17.5 | 30.4 | 48.5 | 107.0 |
-| `crba` | 17.5 | 39.3 | 54.8 | 197.4 |
-| `aba` | 48.2 | 105.1 | 156.4 | 374.9 |
-| `fd_crba` | 53.3 | 81.3 | 188.5 | 770.9 |
-| `jacobian_world` | 10.7 | 15.1 | 12.3 | 26.0 |
+| `update_kinematics` | 10.4 | 17.8 | 26.9 | 59.9 |
+| `rnea` | 15.9 | 27.7 | 44.1 | 97.3 |
+| `crba` | 17.5 | 38.9 | 54.7 | 196.1 |
+| `aba` | 48.8 | 105.8 | 157.5 | 377.0 |
+| `fd_crba` | 51.1 | 77.1 | 180.5 | 750.0 |
+| `jacobian_world` | 10.6 | 15.1 | 12.2 | 26.0 |
 
 Control-loop budgets on that part:
 
 | | spine | xarm7 | go2 | g1 |
 |---|---|---|---|---|
-| torque `update + rnea` | 28 µs / 35.6 kHz | 48 µs / 20.8 kHz | 76 µs / 13.2 kHz | 166 µs / 6.0 kHz |
-| operational space `+ crba` | 46 µs / 22.0 kHz | 87 µs / 11.4 kHz | 130 µs / 7.7 kHz | 364 µs / 2.7 kHz |
-| forward dynamics, best method | 59 µs / 17.0 kHz | 99 µs / 10.1 kHz | 183 µs / 5.5 kHz | 434 µs / 2.3 kHz |
+| torque `update + rnea` | 26 µs / 38.0 kHz | 46 µs / 21.9 kHz | 71 µs / 14.1 kHz | 157 µs / 6.4 kHz |
+| operational space `+ crba` | 44 µs / 22.8 kHz | 84 µs / 11.8 kHz | 126 µs / 8.0 kHz | 353 µs / 2.8 kHz |
+| forward dynamics, best method | 59 µs / 16.9 kHz | 95 µs / 10.5 kHz | 184 µs / 5.4 kHz | 437 µs / 2.3 kHz |
 
 `g1` is a Unitree G1 humanoid, 29 actuated joints on a floating base, and the
 largest model in the suite. **A 29-DOF humanoid closes a 6 kHz torque loop on
@@ -244,12 +244,19 @@ Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly
 nv^2 once nv is large -- Go2's 18 costs 55 µs and G1's 35 costs 197.
 
-**Every file in `benchmark/results/` is current as of v0.5.0**, across five
-cores. Go2 torque tick: **70 µs** (RP2350 Cortex-M33 @ 150 MHz, the image runs
-from SRAM), **75 µs** (STM32G474 @ 170 MHz), 156 µs (STM32L413 @ 80 MHz),
-1033 µs (RP2350 Hazard3, no FPU), 1291 µs (ESP32-C6, no FPU). The two M4F parts
-agree to within **2.5% on cycles per call** (median 0.975), so scale another
-M4F from these by clock.
+**`benchmark/results/stm32g474.csv` is current; the other four cores were
+captured before the RNEA split and read about 8% slow on `rnea`, 2-10% slow on
+`gravity`.** Say so if you quote them, and offer to re-run the board. Go2
+torque tick: **71 µs** (STM32G474 @ 170 MHz), 70 µs (RP2350 Cortex-M33 @ 150
+MHz, the image runs from SRAM), 156 µs (STM32L413 @ 80 MHz), 1033 µs (RP2350
+Hazard3, no FPU), 1291 µs (ESP32-C6, no FPU). The two M4F parts agree to
+within **2.5% on cycles per call** (median 0.975), so scale another M4F from
+these by clock.
+
+The README's five-column table is the pre-split capture throughout, on
+purpose: one refreshed column beside four stale ones would make the
+cross-platform comparison worse, not better. It gets redone in one pass when
+all five boards are on the desk.
 
 A part with no FPU costs 10–20x; say so when someone is choosing one for a
 quadruped.
