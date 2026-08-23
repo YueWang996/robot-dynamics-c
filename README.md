@@ -69,6 +69,13 @@ build system, no submodule. In exactly one `.c` file:
 
 and include it plainly everywhere else.
 
+> [!TIP]
+> **A part with a math accelerator can use it.** `RD_MATH_BACKEND` names a
+> header of yours that defines `RD_SINCOS` and/or `RD_SQRT`, and it works the
+> same in the single-file build as in the tree — see
+> [`backends/`](RobotDynamics/backends/), which ships one for the STM32G4
+> CORDIC.
+
 ```c
 #include "robot_dynamics.h"
 

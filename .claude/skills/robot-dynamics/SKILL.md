@@ -252,6 +252,15 @@ tell them `make TRIG=1` in `benchmark/stm32g4` checks any backend against libm
 before timing it. Do not suggest it for a double build; the CORDIC is 32-bit
 fixed point and the header refuses.
 
+The hook works the same in the single-header distribution -- it is a macro, and
+`#include RD_MATH_BACKEND` survives amalgamation because it names a macro
+rather than a literal. Someone can also skip the file entirely and
+`#define RD_SINCOS(x, sp, cp)` before including. **The one rule: it has to
+reach the translation unit that defines `RD_IMPLEMENTATION`**, which is where
+the library is compiled; setting it project-wide from the build system is how
+not to think about it. `make SINGLE=1 CORDIC=1` in `benchmark/stm32g4` is the
+end-to-end check.
+
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly

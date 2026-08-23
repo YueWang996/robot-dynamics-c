@@ -16,12 +16,16 @@
 # Swap cmsis-dap.cfg for stlink.cfg if that is your probe.
 #
 # Default is 170 MHz from flash, 4 wait states, ART prefetch and caches on --
-# the fastest configuration this part has. Two flags exist to characterise it
-# and neither is how you would ship:
+# the fastest configuration this part has. The flags below characterise it or
+# swap a part of it out; none is how you would ship:
 #
 #   make CORDIC=1    sin/cos on the CORDIC coprocessor rather than the
 #                    polynomial, through the RD_MATH_BACKEND hook
 #   make TRIG=1      check rd_sincos against libm before timing anything
+#   make SINGLE=1    build against dist/robot_dynamics.h, the file people
+#                    actually download, rather than the source tree. With
+#                    CORDIC=1 this is the end-to-end check that a backend
+#                    reaches the single-header build.
 #   make ZEROWS=1    HSI16 at 16 MHz, where flash needs zero wait states
 #   make CCMBENCH=1  the library's hot code in CCM SRAM, on the I-Code bus at
 #                    zero wait states. 170 MHz otherwise unchanged.
@@ -52,16 +56,26 @@ ifeq ($(ZEROWS),1)
   CFLAGS += -DBENCH_G4_ZEROWS=1
 endif
 
+# SINGLE=1 builds against dist/robot_dynamics.h rather than the source tree.
+# -I$(DIST) goes ahead of the rest so "robot_dynamics.h" resolves to the
+# shipped file; -I$(RD) stays reachable for backends/ and spine_model.h.
+# dist/ is generated -- run  python3 ../../tools/amalgamate.py  first.
+ifeq ($(SINGLE),1)
+  DIST   := ../../dist
+  CFLAGS := -I$(DIST) $(CFLAGS)
+endif
+
 # CORDIC=1 routes sin/cos to the G474's CORDIC coprocessor through the
-# RD_MATH_BACKEND hook. See RobotDynamics/backends/rd_cordic_stm32g4.h.
+# RD_MATH_BACKEND hook. See RobotDynamics/backends/rd_cordic_stm32g4.h. The
+# quoting is what a header name has to survive to reach the preprocessor.
+ifeq ($(CORDIC),1)
+  CFLAGS += -DBENCH_G4_CORDIC=1 '-DRD_MATH_BACKEND="backends/rd_cordic_stm32g4.h"'
+endif
+
 # TRIG=1 checks rd_sincos against libm in double before the suite runs, and
 # with CORDIC=1 also walks the coprocessor's precision field.
 ifeq ($(TRIG),1)
   CFLAGS += -DBENCH_TRIG_ACCURACY=1
-endif
-
-ifeq ($(CORDIC),1)
-  CFLAGS += -DBENCH_G4_CORDIC=1 '-DRD_MATH_BACKEND="backends/rd_cordic_stm32g4.h"'
 endif
 
 ifeq ($(RAM),1)
@@ -95,6 +109,8 @@ ifeq ($(CODEGEN),1)
   SRCS  := main.c startup_glue.c \
            $(CG)/bench_codegen.c $(wildcard $(CG)/generated/*.c) \
            $(RD)/rd_algorithms.c $(RD)/rd_chain.c $(RD)/rd_state.c
+else ifeq ($(SINGLE),1)
+SRCS := main.c startup_glue.c $(BENCH)/bench_main.c single_impl.c
 else
 SRCS := main.c startup_glue.c \
         $(BENCH)/bench_main.c \
