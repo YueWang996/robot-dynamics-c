@@ -106,6 +106,11 @@ def make_config(rng, nj, floating):
     cfg["qd"] = rng.uniform(-1.5, 1.5, nv)
     cfg["qdd"] = rng.uniform(-2.0, 2.0, nv)
     cfg["tau"] = rng.uniform(-3.0, 3.0, nv)
+    # Reflected rotor inertia. A floating base has no rotors, so its six stay
+    # zero; the joints get something big enough to matter next to a link.
+    cfg["armature"] = rng.uniform(0.01, 0.3, nv)
+    if floating:
+        cfg["armature"][:6] = 0.0
     return cfg
 
 
@@ -113,7 +118,7 @@ def payload_for(cfg, floating):
     parts = []
     if floating:
         parts += [*cfg["p"], *cfg["quat_wxyz"]]
-    parts += [*cfg["q"], *cfg["qd"], *cfg["qdd"], *cfg["tau"]]
+    parts += [*cfg["q"], *cfg["qd"], *cfg["qdd"], *cfg["tau"], *cfg["armature"]]
     return " ".join(repr(float(x)) for x in parts) + "\n"
 
 
@@ -145,6 +150,7 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name, resolved):
     else:
         q = cfg["q"].copy()
     v, a, tau_in = cfg["qd"].copy(), cfg["qdd"].copy(), cfg["tau"].copy()
+    model.armature[:] = cfg["armature"]
 
     pin.forwardKinematics(model, data, q, v, a)
     pin.updateFramePlacements(model, data)

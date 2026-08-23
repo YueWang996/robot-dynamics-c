@@ -40,6 +40,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     chain->joint_idx = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n);
     chain->joint_type = (rd_int_t*)RD_MALLOC(sizeof(rd_int_t) * n);
     chain->axes = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * nj * 3);
+    chain->armature = (rd_real_t*)RD_CALLOC(
+        (size_t)(nj + (model->use_floating_base ? 6 : 0)), sizeof(rd_real_t));
     chain->T_joint_offset = (rd_real_t*)RD_MALLOC(sizeof(rd_real_t) * n * 16);
     chain->frame_names = (char**)RD_MALLOC(sizeof(char*) * n);
     chain->parent_path = (rd_idx_t*)RD_MALLOC(sizeof(rd_idx_t) * n * n);
@@ -87,6 +89,8 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
             chain->axes[joint_counter*3 + 0] = v[0];
             chain->axes[joint_counter*3 + 1] = v[1];
             chain->axes[joint_counter*3 + 2] = v[2];
+            chain->armature[joint_counter + (model->use_floating_base ? 6 : 0)] =
+                L->joint.armature;
             joint_counter++;
         } else {
             chain->joint_idx[i] = -1;
@@ -415,6 +419,14 @@ rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain) {
     return RD_OK;
 }
 
+rd_status_t rd_chain_set_armature(rd_chain_t* chain, rd_int_t vidx,
+                                  rd_real_t value) {
+    if (!chain || !chain->armature) return RD_ERR_NULL_PTR;
+    if (vidx < 0 || vidx >= rd_chain_get_nv(chain)) return RD_ERR_INVALID_INDEX;
+    chain->armature[vidx] = value;
+    return RD_OK;
+}
+
 void rd_chain_free(rd_chain_t* chain) {
     if (!chain) return;
     
@@ -425,6 +437,7 @@ void rd_chain_free(rd_chain_t* chain) {
     RD_FREE(chain->joint_idx);
     RD_FREE(chain->joint_type);
     RD_FREE(chain->axes);
+    RD_FREE(chain->armature);
     RD_FREE(chain->T_joint_offset);
     
     if (chain->frame_names) {

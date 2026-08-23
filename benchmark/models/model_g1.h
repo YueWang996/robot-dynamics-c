@@ -86,7 +86,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [1] pelvis_contour_link */
@@ -108,7 +109,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [2] left_hip_pitch_link */
@@ -130,7 +132,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-2.5307), .q_max = RD_REAL(2.8798),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [3] left_hip_roll_link */
@@ -152,7 +155,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-0.5236), .q_max = RD_REAL(2.9671),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [4] left_hip_yaw_link */
@@ -174,7 +178,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-2.7576), .q_max = RD_REAL(2.7576),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [5] left_knee_link */
@@ -196,7 +201,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-0.087267), .q_max = RD_REAL(2.8798),
                     .dq_max = RD_REAL(20.0), .tau_max = RD_REAL(139.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [6] left_ankle_pitch_link */
@@ -218,7 +224,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-0.87267), .q_max = RD_REAL(0.5236),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [7] left_ankle_roll_link */
@@ -240,7 +247,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-0.2618), .q_max = RD_REAL(0.2618),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [8] right_hip_pitch_link */
@@ -262,7 +270,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-2.5307), .q_max = RD_REAL(2.8798),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [9] right_hip_roll_link */
@@ -284,7 +293,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-2.9671), .q_max = RD_REAL(0.5236),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [10] right_hip_yaw_link */
@@ -306,7 +316,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-2.7576), .q_max = RD_REAL(2.7576),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [11] right_knee_link */
@@ -328,7 +339,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-0.087267), .q_max = RD_REAL(2.8798),
                     .dq_max = RD_REAL(20.0), .tau_max = RD_REAL(139.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [12] right_ankle_pitch_link */
@@ -350,7 +362,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-0.87267), .q_max = RD_REAL(0.5236),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [13] right_ankle_roll_link */
@@ -372,7 +385,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-0.2618), .q_max = RD_REAL(0.2618),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [14] waist_yaw_link */
@@ -394,7 +408,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-2.618), .q_max = RD_REAL(2.618),
                     .dq_max = RD_REAL(32.0), .tau_max = RD_REAL(88.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [15] waist_roll_link */
@@ -416,7 +431,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-0.52), .q_max = RD_REAL(0.52),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [16] torso_link */
@@ -438,7 +454,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-0.52), .q_max = RD_REAL(0.52),
                     .dq_max = RD_REAL(30.0), .tau_max = RD_REAL(35.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [17] logo_link */
@@ -460,7 +477,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [18] head_link */
@@ -482,7 +500,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [19] waist_support_link */
@@ -504,7 +523,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [20] imu_in_torso */
@@ -526,7 +546,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [21] d435_link */
@@ -548,7 +569,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [22] mid360_link */
@@ -570,7 +592,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [23] left_shoulder_pitch_link */
@@ -592,7 +615,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-3.0892), .q_max = RD_REAL(2.6704),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [24] left_shoulder_roll_link */
@@ -614,7 +638,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-1.5882), .q_max = RD_REAL(2.2515),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [25] left_shoulder_yaw_link */
@@ -636,7 +661,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-2.618), .q_max = RD_REAL(2.618),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [26] left_elbow_link */
@@ -658,7 +684,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-1.0472), .q_max = RD_REAL(2.0944),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [27] left_wrist_roll_link */
@@ -680,7 +707,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-1.972222054), .q_max = RD_REAL(1.972222054),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [28] left_wrist_pitch_link */
@@ -702,7 +730,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-1.614429558), .q_max = RD_REAL(1.614429558),
                     .dq_max = RD_REAL(22.0), .tau_max = RD_REAL(5.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [29] left_wrist_yaw_link */
@@ -724,7 +753,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-1.614429558), .q_max = RD_REAL(1.614429558),
                     .dq_max = RD_REAL(22.0), .tau_max = RD_REAL(5.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [30] left_rubber_hand */
@@ -746,7 +776,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [31] right_shoulder_pitch_link */
@@ -768,7 +799,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-3.0892), .q_max = RD_REAL(2.6704),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [32] right_shoulder_roll_link */
@@ -790,7 +822,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-2.2515), .q_max = RD_REAL(1.5882),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [33] right_shoulder_yaw_link */
@@ -812,7 +845,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-2.618), .q_max = RD_REAL(2.618),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [34] right_elbow_link */
@@ -834,7 +868,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-1.0472), .q_max = RD_REAL(2.0944),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [35] right_wrist_roll_link */
@@ -856,7 +891,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(-1.972222054), .q_max = RD_REAL(1.972222054),
                     .dq_max = RD_REAL(37.0), .tau_max = RD_REAL(25.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [36] right_wrist_pitch_link */
@@ -878,7 +914,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Y,
                     .q_min = RD_REAL(-1.614429558), .q_max = RD_REAL(1.614429558),
                     .dq_max = RD_REAL(22.0), .tau_max = RD_REAL(5.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [37] right_wrist_yaw_link */
@@ -900,7 +937,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_Z,
                     .q_min = RD_REAL(-1.614429558), .q_max = RD_REAL(1.614429558),
                     .dq_max = RD_REAL(22.0), .tau_max = RD_REAL(5.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [38] right_rubber_hand */
@@ -922,7 +960,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
             /* [39] imu_in_pelvis */
@@ -944,7 +983,8 @@ static inline const rd_model_t* g1_model_get(void) {
                     .axis = RD_AXIS_X,
                     .q_min = RD_REAL(0.0), .q_max = RD_REAL(0.0),
                     .dq_max = RD_REAL(0.0), .tau_max = RD_REAL(0.0),
-                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0)
+                    .damping = RD_REAL(0.0), .friction = RD_REAL(0.0),
+                    .armature = RD_REAL(0.0)
                 }
             },
         }

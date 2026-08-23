@@ -514,6 +514,7 @@ static rd_status_t rnea_impl(const rd_chain_t* chain,
         const rd_dyn_node_t* d = &chain->dyn[di];
         if (d->vidx < 0) continue;
         tau_out[d->vidx] = d->s_sign * f[d->node*6 + d->s_axis];
+        if (qdd) tau_out[d->vidx] += chain->armature[d->vidx] * qdd[d->vidx];
     }
     return RD_OK;
 }
@@ -659,7 +660,9 @@ rd_status_t rd_crba(const rd_chain_t* chain, const rd_state_t* state,
          */
         rd_real_t f_prop[6];
         rd_rbi_col(RD_IC(node), d->s_axis, d->s_sign, f_prop);
-        M_out[col*nv + col] = d->s_sign * f_prop[d->s_axis];
+        /* The rotor turns with the joint and nothing else, so its reflected
+         * inertia lands on the diagonal alone. */
+        M_out[col*nv + col] = d->s_sign * f_prop[d->s_axis] + chain->armature[col];
 
         const rd_dyn_node_t* dc = d;
         for (;;) {
@@ -749,7 +752,7 @@ rd_status_t rd_aba(const rd_chain_t* chain, const rd_state_t* state,
 
         if (vi >= 0) {
             rd_abi_col(Ia, sk, sg, &U[node*6]);
-            rd_real_t d = sg * U[node*6 + sk];
+            rd_real_t d = sg * U[node*6 + sk] + chain->armature[vi];
             if (d <= RD_EPS) return RD_ERR_SINGULAR;
             D[node] = d;
             u[node] = (tau ? tau[vi] : RD_REAL(0.0)) - sg * pa[sk];

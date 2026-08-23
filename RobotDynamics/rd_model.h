@@ -99,6 +99,17 @@ typedef struct {
     /* Joint dynamics */
     rd_real_t damping;     /**< Viscous damping */
     rd_real_t friction;    /**< Coulomb friction */
+
+    /**
+     * Reflected rotor inertia, in the same units as a diagonal entry of M.
+     * A geared actuator's rotor contributes n^2 * I_rotor at the joint, which
+     * on a hobby servo or any high-ratio drive is routinely larger than the
+     * link it turns. Zero leaves the model rigid-body only.
+     *
+     * URDF has no field for it, so tools/urdf2c.py emits zero and it is set
+     * afterwards -- rd_chain_set_armature(), or the chain's array directly.
+     */
+    rd_real_t armature;
 } rd_joint_t;
 
 /* ============================================================================

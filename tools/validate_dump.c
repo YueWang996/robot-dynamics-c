@@ -35,7 +35,7 @@ static rd_state_t state;
 static rd_real_t  state_buf[RD_STATE_BUF_FLOATS(MAXN)];
 
 static rd_real_t q_base[7], q_joints[MAXNV];
-static rd_real_t qd[MAXNV], qdd[MAXNV], tau_in[MAXNV];
+static rd_real_t qd[MAXNV], qdd[MAXNV], tau_in[MAXNV], armature[MAXNV];
 static rd_real_t M[MAXNV * MAXNV], J[6 * MAXNV], tau[MAXNV], qdd_fd[MAXNV];
 
 static void rd(rd_real_t* dst, int n) {
@@ -77,7 +77,11 @@ int main(int argc, char** argv) {
 
     if (fb) rd(q_base, 7);
     rd(q_joints, nj);
-    rd(qd, nv); rd(qdd, nv); rd(tau_in, nv);
+    rd(qd, nv); rd(qdd, nv); rd(tau_in, nv); rd(armature, nv);
+
+    /* Reflected rotor inertia, exercised on every run so that a mistake in it
+     * cannot hide behind a zero. */
+    for (int i = 0; i < nv; ++i) rd_chain_set_armature(&chain, i, armature[i]);
 
     printf("REAL_BYTES %d\n", (int)sizeof(rd_real_t));
     printf("SHAPE %d %d %d %d\n", n, nj, nv, fb);

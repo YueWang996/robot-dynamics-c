@@ -61,6 +61,10 @@ typedef struct {
     /* Joint axes (n_joints x 3) */
     rd_real_t* axes;               /**< Row-major, size n_joints*3 */
 
+    rd_real_t* armature;           /**< nv, reflected rotor inertia per velocity
+                                    *   index. Zero for a floating base's six.
+                                    *   Writable: see rd_chain_set_armature. */
+
     /* Transforms (4x4, column-major). There is deliberately no separate link
      * offset: the link frame is the joint's child frame, so one would always be
      * the identity, and composing against it cost a 4x4 multiply per node per
@@ -144,6 +148,19 @@ static RD_INLINE int rd_chain_node_is_dynamic(const rd_chain_t* chain,
  * @return RD_OK on success, error code otherwise
  */
 rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain);
+
+/**
+ * @brief Set one joint's reflected rotor inertia after the chain is built.
+ * @param vidx Velocity index, i.e. the joint's position in qd/qdd/tau.
+ * @param value n^2 * I_rotor, in the units of a diagonal entry of M.
+ *
+ * URDF carries no armature, so a model generated from one starts at zero and
+ * this is how it gets filled in. It is added to M's diagonal by rd_crba, to
+ * tau by rd_rnea, and to the articulated inertia by rd_aba, which keeps the
+ * three consistent with each other.
+ */
+rd_status_t rd_chain_set_armature(rd_chain_t* chain, rd_int_t vidx,
+                                  rd_real_t value);
 
 /**
  * @brief Free chain resources

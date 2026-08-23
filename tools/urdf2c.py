@@ -293,7 +293,9 @@ def emit(model_name, links, order, floating_base, src_path):
         w(f"                    .axis = {link.joint_axis},")
         w(f"                    .q_min = {R(link.q_min)}, .q_max = {R(link.q_max)},")
         w(f"                    .dq_max = {R(link.dq_max)}, .tau_max = {R(link.tau_max)},")
-        w(f"                    .damping = {R(link.damping)}, .friction = {R(link.friction)}")
+        w(f"                    .damping = {R(link.damping)}, .friction = {R(link.friction)},")
+        # URDF carries no armature; rd_chain_set_armature() fills it in.
+        w(f"                    .armature = {R(0.0)}")
         w("                }")
         w("            },")
 
