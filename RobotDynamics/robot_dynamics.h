@@ -9,8 +9,11 @@
  * - Forward kinematics          (rd_fk_frame, rd_forward_kinematics)
  * - Geometric Jacobian          (rd_jacobian)
  * - Inverse dynamics via RNEA   (rd_rnea)
- * - Forward dynamics via ABA    (rd_aba)
+ * - Forward dynamics, either    (rd_aba, rd_forward_dynamics)
  * - Mass matrix via CRBA        (rd_crba)
+ * - External forces on any link (rd_rnea_ext, rd_aba_ext)
+ * - Reflected rotor inertia     (rd_chain_set_armature)
+ * - Cholesky factor and solve   (rd_cholesky_factor, rd_cholesky_solve)
  * - Spatial velocity            (rd_spatial_velocity)
  * - Spatial acceleration        (rd_spatial_acceleration)
  * - Gravity / Coriolis terms    (rd_gravity, rd_nonlinear_terms, rd_coriolis)
@@ -48,12 +51,17 @@
  * rd_chain_free(&chain);
  * @endcode
  *
- * Configuration (define before including):
- * - RD_USE_SINGLE_PRECISION: Use float (default: 1)
- * - RD_USE_CMSIS_DSP: Use ARM CMSIS-DSP (default: 0)
+ * Configuration (define before including; see rd_config.h for all of it):
+ * - RD_USE_SINGLE_PRECISION: float rather than double (default: 1)
  * - RD_MAX_LINKS / RD_MAX_JOINTS: model size bounds (default: 16 / 12)
+ * - RD_FAST_TRIG: polynomial sin/cos rather than libm's (default: 1)
+ * - RD_ENABLE_ABA: compile the articulated-body algorithm (default: 1).
+ *   Off, a link costs 45 floats of state workspace instead of 70.
+ * - RD_MATH_BACKEND: a header of yours defining RD_SINCOS and/or RD_SQRT, so
+ *   a part with a math accelerator can use it. Nothing ships with the library.
+ * - RD_USE_CMSIS_DSP: use ARM CMSIS-DSP (default: 0)
  *
- * @version 0.5.0
+ * @version 0.6.0
  */
 
 #ifndef ROBOT_DYNAMICS_H
