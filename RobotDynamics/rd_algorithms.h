@@ -234,11 +234,15 @@ rd_status_t rd_crba(const rd_chain_t* chain,
  * RD_ENABLE_ABA=0 and get 25 floats per link back. rd_forward_dynamics() then
  * answers RD_ERR_INVALID_INDEX to RD_FD_ABA.
  *
- * Measured on an STM32L413, forward dynamics = update_kinematics + the method:
+ * Forward dynamics = update_kinematics + the method. How much the winner wins
+ * by, on two Cortex-M4F parts that agree about it -- an STM32L413 at 80 MHz
+ * and an STM32G474 at 170 MHz:
  *
- *   spine   9 dof, floating base    ABA  -10%
- *   xarm7   7 dof, fixed base       CRBA -19%
- *   go2    18 dof, floating base    ABA  -16%
+ *                                   winner    L413   G474
+ *   spine   9 dof, floating base    ABA        -4%    -4%
+ *   xarm7   7 dof, fixed base       CRBA      -23%   -23%
+ *   go2    18 dof, floating base    ABA       -12%   -11%
+ *   g1     35 dof, floating base    ABA       -47%   -46%
  *
  * Two things move the line, in opposite directions. The solve grows as nv^3
  * with nothing to skip, and a floating base makes that worse -- its six DOF

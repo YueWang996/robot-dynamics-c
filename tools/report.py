@@ -29,7 +29,7 @@ ALGO_ORDER = [
     "_heap_probe",
 ]
 
-ROBOT_ORDER = ["simple_arm", "spine", "xarm7", "go2"]
+ROBOT_ORDER = ["simple_arm", "spine", "xarm7", "go2", "g1"]
 
 
 def load(paths):

@@ -184,20 +184,20 @@ precision, `-O3`:
 | | **M4F @ 170**<br><sub>STM32G474</sub> | **M4F @ 80**<br><sub>STM32L413</sub> | **M33 @ 150**<br><sub>RP2350</sub> | **Hazard3 @ 150**<br><sub>RP2350</sub> | **RV32 @ 160**<br><sub>ESP32-C6</sub> |
 |---|---|---|---|---|---|
 | | FPU | FPU | FPU | *no FPU* | *no FPU* |
-| `update_kinematics` | 27.1 | 55.5 | 24.9 | 265.3 | 355.3 |
-| `fk_frame` | 10.7 | 22.2 | 9.9 | 107.0 | 142.3 |
-| `jacobian_world` | 12.3 | 25.4 | 10.3 | 63.8 | 81.1 |
-| `jacobian_local` | 19.9 | 41.6 | 16.7 | 177.6 | 224.3 |
-| `rnea` | 48.5 | 100.6 | 45.4 | 767.9 | 936.1 |
-| `crba` | 54.8 | 113.3 | 55.9 | 530.4 | 678.5 |
-| `aba` | 156.4 | 327.1 | 120.2 | 1756.8 | 2208.1 |
-| `gravity` | 35.1 | 72.0 | 32.7 | 314.3 | 474.6 |
-| `spatial_acceleration` | 19.5 | 40.8 | 17.9 | 202.8 | 275.9 |
+| `update_kinematics` | 26.9 | 55.5 | 24.9 | 265.3 | 354.7 |
+| `fk_frame` | 10.7 | 22.2 | 9.9 | 107.0 | 142.1 |
+| `jacobian_world` | 12.2 | 25.4 | 10.3 | 63.8 | 81.0 |
+| `jacobian_local` | 19.9 | 41.4 | 16.7 | 177.6 | 224.2 |
+| `rnea` | 44.1 | 93.3 | 45.4 | 767.9 | 938.4 |
+| `crba` | 54.7 | 113.4 | 55.9 | 530.4 | 678.9 |
+| `aba` | 157.5 | 326.9 | 120.2 | 1756.8 | 2211.9 |
+| `gravity` | 33.1 | 67.9 | 32.7 | 314.3 | 471.5 |
+| `spatial_acceleration` | 19.4 | 40.6 | 17.9 | 202.8 | 275.6 |
 | `spatial_velocity` | 4.7 | 9.7 | 4.6 | 52.3 | 72.5 |
 | | | | | | |
-| **torque tick** | 76 µs<br>13.2 kHz | 156 µs<br>6.4 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1291 µs<br>774 Hz |
-| **operational space** | 130 µs<br>7.7 kHz | 269 µs<br>3.7 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1970 µs<br>508 Hz |
-| **forward dynamics** | 183 µs<br>5.5 kHz | 383 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2563 µs<br>390 Hz |
+| **torque tick** | 71 µs<br>14.1 kHz | 149 µs<br>6.7 kHz | 70 µs<br>14.2 kHz | 1033 µs<br>968 Hz | 1293 µs<br>773 Hz |
+| **operational space** | 126 µs<br>8.0 kHz | 262 µs<br>3.8 kHz | 126 µs<br>7.9 kHz | 1564 µs<br>640 Hz | 1972 µs<br>507 Hz |
+| **forward dynamics** | 184 µs<br>5.4 kHz | 382 µs<br>2.6 kHz | 145 µs<br>6.9 kHz | 2022 µs<br>495 Hz | 2567 µs<br>390 Hz |
 
 Torque tick is `update_kinematics` + `rnea`; operational space adds `crba`;
 forward dynamics is `update_kinematics` + the faster of ABA and CRBA for that
@@ -207,21 +207,25 @@ How it scales with the robot, on the STM32G474 at 170 MHz:
 
 | Robot | nv | Torque tick | Operational space | Forward dynamics |
 |---|---|---|---|---|
-| `spine` | 9, floating | 28 µs — 35.6 kHz | 46 µs — 22.0 kHz | 59 µs — 17.0 kHz |
-| `xarm7` | 7, fixed | 48 µs — 20.8 kHz | 87 µs — 11.4 kHz | 99 µs — 10.1 kHz |
-| `go2` | 18, floating | 76 µs — 13.2 kHz | 130 µs — 7.7 kHz | 183 µs — 5.5 kHz |
-| `g1` | 35, floating | 166 µs — 6.0 kHz | 364 µs — 2.7 kHz | 434 µs — 2.3 kHz |
+| `spine` | 9, floating | 26 µs — 38.0 kHz | 44 µs — 22.8 kHz | 59 µs — 16.9 kHz |
+| `xarm7` | 7, fixed | 46 µs — 21.9 kHz | 84 µs — 11.8 kHz | 95 µs — 10.5 kHz |
+| `go2` | 18, floating | 71 µs — 14.1 kHz | 126 µs — 8.0 kHz | 184 µs — 5.4 kHz |
+| `g1` | 35, floating | 157 µs — 6.4 kHz | 353 µs — 2.8 kHz | 437 µs — 2.3 kHz |
 
 `g1` is a Unitree G1, a **29-DOF humanoid**: 40 links, a floating base, and the
 largest model in the suite. It closes a 6 kHz torque loop on a single
-Cortex-M4F.
+Cortex-M4F — and 3 kHz on the 80 MHz L413, inside 64 KB of RAM.
 
 > [!NOTE]
 > **Pick a core with a hardware FPU.** The two soft-float columns run 10–20×
 > slower, so a quadruped wants an M4F, M33 or better. The Pico 2 image is the
 > only one linked `copy_to_ram` and pays no flash wait states, which is most of
-> what separates a 150 MHz M33 from a 170 MHz M4F here. Every column is current
-> as of v0.5.0.
+> what separates a 150 MHz M33 from a 170 MHz M4F here.
+>
+> The G474, L413 and ESP32-C6 columns are current. The two RP2350 columns were
+> captured one release earlier, so their `rnea` and `gravity` read a few
+> percent slow — on an FPU core, not on the Hazard3, where that change was
+> worth nothing.
 
 Raw CSV lives in [`benchmark/results/`](benchmark/results/), and
 `tools/report.py` regenerates these tables from it.

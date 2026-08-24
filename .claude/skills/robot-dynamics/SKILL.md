@@ -222,8 +222,8 @@ with a floating base the CRBA solve costs 771 µs against ABA's 375.
 **Forward dynamics has two methods and the caller picks.**
 `rd_forward_dynamics(..., RD_FD_ABA | RD_FD_CRBA, work, qdd)`. CRBA builds M
 and h and factorises; it needs `rd_forward_dynamics_work()` floats of scratch.
-On the STM32L413: ABA wins for spine by 9% and Go2 by 17%, CRBA wins for
-xarm7 by 23%. Two effects pull opposite ways -- the solve is nv^3 and a
+Measured on both M4F parts, which agree: ABA wins spine by 4%, Go2 by 11-12%
+and G1 by 46-47%; CRBA wins xarm7 by 23%. Two effects pull opposite ways -- the solve is nv^3 and a
 floating base gives the mass matrix no sparsity, but ABA's congruence has a
 fast path for joints whose origin carries no rotation, which xarm7's quarter
 turns miss and most URDFs hit. Tell people to measure their own model.
@@ -268,19 +268,19 @@ Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly
 nv^2 once nv is large -- Go2's 18 costs 55 µs and G1's 35 costs 197.
 
-**`benchmark/results/stm32g474.csv` is current; the other four cores were
-captured before the RNEA split and read about 8% slow on `rnea`, 2-10% slow on
-`gravity`.** Say so if you quote them, and offer to re-run the board. Go2
-torque tick: **71 µs** (STM32G474 @ 170 MHz), 70 µs (RP2350 Cortex-M33 @ 150
-MHz, the image runs from SRAM), 156 µs (STM32L413 @ 80 MHz), 1033 µs (RP2350
-Hazard3, no FPU), 1291 µs (ESP32-C6, no FPU). The two M4F parts agree to
-within **2.5% on cycles per call** (median 0.975), so scale another M4F from
-these by clock.
+**The STM32G474, STM32L413 and ESP32-C6 files in `benchmark/results/` are
+current; the two RP2350 ones predate the RNEA split** and read about 8% slow on
+`rnea` and 2-10% slow on `gravity` -- on the Arm column. Not on the Hazard3:
+that change was worth nothing on a core without an FPU, where every float
+operation is a library call. Say which you are quoting.
 
-The README's five-column table is the pre-split capture throughout, on
-purpose: one refreshed column beside four stale ones would make the
-cross-platform comparison worse, not better. It gets redone in one pass when
-all five boards are on the desk.
+Go2 torque tick: **70 µs** (RP2350 Cortex-M33 @ 150 MHz, image in SRAM),
+**71 µs** (STM32G474 @ 170 MHz), 149 µs (STM32L413 @ 80 MHz), 1033 µs (RP2350
+Hazard3, no FPU), 1293 µs (ESP32-C6, no FPU). The two M4F parts agree closely
+on cycles per call, so scale another M4F from these by clock.
+
+**A 29-DOF humanoid fits on an 80 MHz M4F with 64 KB.** G1's torque tick is
+157 µs on the G474 and 330 µs on the L413 -- 6.4 kHz and 3.0 kHz.
 
 A part with no FPU costs 10–20x; say so when someone is choosing one for a
 quadruped.
