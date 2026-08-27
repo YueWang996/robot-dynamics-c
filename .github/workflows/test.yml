@@ -30,7 +30,7 @@ jobs:
       matrix:
         cc: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Smoke test, four configurations
         run: |
@@ -71,7 +71,7 @@ jobs:
   single-header:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Arm toolchain
         uses: carlosperate/arm-none-eabi-gcc-action@v1
