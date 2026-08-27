@@ -1,0 +1,89 @@
+# Compiles and runs the library on every code change.
+#
+# Until this existed, nothing checked a push to main: release.yml only fires on
+# a tag, and docs.yml only builds documentation. A change could sit on main
+# broken until somebody cut a release.
+#
+# What runs here is what a developer runs locally, in the same four
+# configurations, under two compilers. The Pinocchio cross-check is not here:
+# it needs a conda environment and URDF files this repository does not carry
+# (they are BSD-3 and belong to their projects). Run it before a release with
+#     python3 tools/validate.py --urdf-root /path/to/bard
+name: test
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md', '.github/workflows/docs.yml']
+  pull_request:
+    paths-ignore: ['docs/**', '**.md', '.github/workflows/docs.yml']
+  workflow_dispatch:
+
+jobs:
+  # The library compiled four ways and its smoke test run each time. Precision
+  # and RD_ENABLE_ABA both change struct layout, so all four are real builds
+  # rather than the same object file tested twice.
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Smoke test, four configurations
+        run: |
+          fail=0
+          for aba in "" "-DRD_ENABLE_ABA=0"; do
+            for prec in 1 0; do
+              name="ABA=${aba:-on} SINGLE=$prec"
+              echo "::group::$name"
+              ${{ matrix.cc }} -O2 -std=c99 -Wall -Wextra -pedantic -Werror \
+                $aba -DRD_USE_SINGLE_PRECISION=$prec \
+                -I RobotDynamics test_main.c RobotDynamics/rd_*.c -lm -o rd_test \
+                && ./rd_test > /dev/null \
+                && echo "PASS  $name" || { echo "FAIL  $name"; fail=1; }
+              echo "::endgroup::"
+            done
+          done
+          exit $fail
+        env:
+          CC: ${{ matrix.cc }}
+
+      - name: CMake build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          cmake --build build
+          ./build/rd_test
+
+      - name: Examples
+        run: |
+          cd examples/go2_contact
+          make CC=${{ matrix.cc }}
+          ./go2_contact > /dev/null
+
+  # The released single header has to be the same library as the tree, and
+  # --verify is what establishes that: it builds the generated header seven
+  # ways and diffs its Cortex-M4 code against the multi-file build function by
+  # function. Without the Arm toolchain that last check skips itself silently,
+  # which is why it is installed here.
+  single-header:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Arm toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: '13.2.Rel1'
+
+      - name: Amalgamate and verify
+        run: |
+          python3 tools/amalgamate.py -o dist/robot_dynamics.h --verify | tee verify.log
+          # --verify skips the disassembly comparison rather than failing when
+          # arm-none-eabi-gcc is missing, so an install that quietly broke would
+          # leave this job green with its most valuable check not run.
+          grep -q 'identical instruction for instruction' verify.log
+        env:
+          RD_ARM_GCC: arm-none-eabi-gcc
