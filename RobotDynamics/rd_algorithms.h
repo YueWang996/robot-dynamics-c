@@ -129,8 +129,14 @@ rd_status_t rd_rnea(const rd_chain_t* chain,
  * @brief Inverse dynamics with external forces:
  *        tau = M qdd + C qd + g - sum_i J_i^T f_ext_i.
  *
- * The subtraction happens inside the O(n) recursion, so contacts cost a few
- * additions rather than a Jacobian and a 6xnv product per contact.
+ * The subtraction happens inside the O(n) recursion, so a force costs a few
+ * additions rather than a Jacobian and a 6xnv product.
+ *
+ * This is one of the two senses of "contact" here and they do different jobs:
+ * a force is one you already know and are applying -- a measured load cell, a
+ * thruster, a payload. A constraint further down is one whose force is solved
+ * for, because the foot is planted and must not accelerate. Use whichever you
+ * actually have.
  *
  * @param qdd   [nv] or NULL for zero acceleration.
  * @param f_ext [6*n_nodes] or NULL. See above.
@@ -311,7 +317,15 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
  * Everything here is expressed in world-aligned axes at frame_a's origin.
  * ========================================================================= */
 
-/** Second frame of a constraint that ties the first one to the world. */
+/**
+ * Second frame of a constraint that ties the first one to the world.
+ *
+ * Not RD_FRAME_WORLD, which is an rd_frame_t and says which frame a Jacobian
+ * or a velocity is *expressed in*. The two read alike and the compiler will
+ * not separate them -- writing RD_FRAME_WORLD for frame_b compiles and quietly
+ * constrains against link 0, the base, because that is what the enum's zero
+ * means. This one is an index and it is negative.
+ */
 #define RD_ANCHOR_WORLD ((rd_idx_t)-1)
 
 typedef enum {
@@ -323,9 +337,10 @@ typedef enum {
 } rd_constraint_type_t;
 
 typedef struct {
-    rd_idx_t frame_a;
-    rd_idx_t frame_b;         /**< RD_ANCHOR_WORLD ties frame_a to the world. */
-    rd_int_t type;            /**< rd_constraint_type_t */
+    rd_idx_t             frame_a;
+    rd_idx_t             frame_b;  /**< RD_ANCHOR_WORLD ties frame_a to the
+                                    *   world. See the warning above it. */
+    rd_constraint_type_t type;
 } rd_constraint_t;
 
 /** @brief Rows the constraint set contributes: 3 per point, 6 per weld. */
@@ -377,6 +392,10 @@ rd_int_t rd_constrained_dynamics_work(const rd_chain_t* chain,
  * by its Schur complement: factorise M once, solve it against every row of J
  * to get M^-1 J^T, then factorise the small J M^-1 J^T. Both factorisations
  * are the Cholesky above.
+ *
+ * With n_cons = 0 this is exactly rd_forward_dynamics(RD_FD_CRBA): same
+ * arithmetic, same answer. That is deliberate -- a leg leaving the ground
+ * shortens the array rather than changing which function the loop calls.
  *
  * @param tau        [nv] or NULL.
  * @param cons       n_cons constraints, or NULL/0 for plain forward dynamics.
