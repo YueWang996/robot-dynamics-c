@@ -1,131 +1,165 @@
-# 快速上手 {#quickstart}
+# 快速开始 {#quickstart}
 
-## 拿到库
+本页从零走到一个能跑的控制循环。
 
-从 [Releases](https://github.com/YueWang996/robot-dynamics-c/releases/latest)
-下载 **`robot_dynamics.h`**，扔进工程目录。一个文件，不用改构建系统，不用加子模块。
+## 1. 获取库
 
-在其中一个 `.c` 文件里这样写，库的实现就编译进这个文件：
+下载 [robot_dynamics.h](https://github.com/YueWang996/robot-dynamics-c/releases/latest)
+放进工程目录。整个库就这一个文件。
+
+在**恰好一个** `.c` 文件里定义 `RD_IMPLEMENTATION` 再包含它，实现会编译进这个文件：
 
 ```c
+/* robot_dynamics_impl.c */
 #define RD_IMPLEMENTATION
 #include "robot_dynamics.h"
 ```
 
-只能有一个文件这么写。其他地方直接 `#include "robot_dynamics.h"` 就行。
+其余文件直接包含即可：
 
-发布的这个头文件和源码树是同一个库，这件事是验证过的。`tools/amalgamate.py --verify`
-会把刚生成的头文件按七种配置各编译一遍，再把它产出的 Cortex-M4 机器码和多文件版本
-逐个函数比对。40 个函数全部逐条指令一致。
+```c
+#include "robot_dynamics.h"
+```
 
-## 从源码树用
-
-如果你用 CMake，或者想自己生成那个单头文件：
+## 2. 转换模型
 
 ```bash
-git clone https://github.com/YueWang996/robot-dynamics-c
-cd robot-dynamics-c
-cmake -B build && cmake --build build && ./build/rd_test   # 主机上的冒烟测试
-python3 tools/amalgamate.py --verify                       # 生成 dist/robot_dynamics.h
+python3 tools/urdf2c.py my_robot.urdf -n my_robot -o model_my_robot.h --floating-base
 ```
+
+固定基座的机器人去掉 `--floating-base`。
+
+输出是一个 `const rd_model_t my_robot = {...}` 的头文件，编译后放在 flash，不占 RAM。
+
+转换器的限制，不满足会直接报错：
+
+| 限制 | 说明 |
+|---|---|
+| 关节轴与坐标轴平行 | URDF 的 `<axis>` 只能是 `±1 0 0` / `0 ±1 0` / `0 0 ±1`。倾斜的轴需要吸收进关节的 `rpy` 偏置 |
+| 连杆名不超过 15 字符 | 名字存在 `char name[16]` 里 |
+| 父连杆排在子连杆前面 | URDF 一般已满足 |
+
+## 3. 设置模型规模
+
+在包含任何头文件**之前**定义两个宏，它们决定 rd_model_t 结构体的大小：
+
+```c
+#define RD_MAX_LINKS   32
+#define RD_MAX_JOINTS  12
+#include "robot_dynamics.h"
+```
+
+或者在编译命令行上给：
+
+```bash
+cc -DRD_MAX_LINKS=32 -DRD_MAX_JOINTS=12 ...
+```
+
+默认值是 16 和 12。常见机器人的数值见 @ref configuration "编译选项"。
+
+## 4. 写代码
+
+完整可编译的例子：
+
+```c
+#include "robot_dynamics.h"
+#include "model_my_robot.h"
+
+static rd_chain_t chain;
+static rd_state_t state;
+static rd_real_t  buf[RD_STATE_BUF_FLOATS(RD_MAX_LINKS)];
+static rd_idx_t   foot_id;
+
+/* 关节空间向量。浮动基座时 nv = 6 + 关节数 */
+static rd_real_t q_base[7], q_joints[RD_MAX_JOINTS];
+static rd_real_t qd[6 + RD_MAX_JOINTS], qdd[6 + RD_MAX_JOINTS];
+static rd_real_t tau[6 + RD_MAX_JOINTS];
+static rd_real_t J[6 * (6 + RD_MAX_JOINTS)];
+
+int setup(void)
+{
+    if (rd_chain_build(&my_robot, &chain) != RD_OK)
+        return -1;
+
+    if (rd_state_init(&state, chain.n_nodes, buf, sizeof(buf)) != RD_OK)
+        return -1;
+
+    foot_id = rd_chain_find_frame(&chain, "foot_fl");
+    if (foot_id < 0)
+        return -1;                       /* 名字拼错了 */
+
+    return 0;
+}
+
+void control_tick(void)
+{
+    read_encoders(q_joints, qd);         /* 你的驱动 */
+    read_imu(q_base, qd);                /* 固定基座时 q_base 传 NULL */
+
+    /* 每周期一次，必须在其他算法之前 */
+    rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
+
+    /* 逆动力学：由期望加速度算力矩 */
+    rd_rnea(&chain, &state, qdd, NULL, tau);
+
+    /* 脚的雅可比，世界系 */
+    rd_jacobian(&chain, &state, foot_id, RD_FRAME_WORLD, J);
+
+    write_torques(tau);                  /* 你的驱动 */
+}
+```
+
+调用顺序有三条硬性要求：
+
+1. rd_chain_build() 在最前，只调一次。它是库里唯一分配堆内存的函数。
+2. rd_state_init() 在使用 `state` 之前调用，把缓冲区划分给各个字段。
+3. rd_update_kinematics() 在每个周期的开头调一次。它算出所有连杆的位姿和速度，
+   后面的算法读这份结果。`q` 变了却没调它，得到的是上一周期的结果，且不报错。
+
+一个周期里可以调任意多个算法，它们共用同一次 rd_update_kinematics() 的结果。
+
+## 5. 编译
+
+单头文件，主机上：
+
+```bash
+cc -O2 -std=c99 main.c robot_dynamics_impl.c -lm -o app
+```
+
+CMake：
 
 ```cmake
 add_subdirectory(RobotDynamics)
 target_link_libraries(my_firmware PRIVATE robot_dynamics)
 ```
 
-`./build/rd_test` 什么都不用装就能跑。
-`python3 tools/validate.py --urdf-root /path/to/bard` 是完整的 Pinocchio 交叉验证，
-那个需要先装 Pinocchio。
-
-## 把你的机器人转进来
+嵌入式目标记得开硬件浮点，否则慢 6 到 19 倍：
 
 ```bash
-python3 tools/urdf2c.py my_robot.urdf -n my_robot -o model_my_robot.h --floating-base
+arm-none-eabi-gcc -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard ...
 ```
 
-生成的是一个 `const` 初始化的 rd_model_t 结构体。因为是 `const`，编译器会把它放进
-flash，不占 RAM。
+## 6. 验证结果
 
-转换器会检查几件 C 侧必须满足的事，遇到表达不了的模型直接报错停下，不会悄悄凑合：
-关节轴必须和坐标轴平行、连杆名不超过 15 个字符、父连杆在数组里排在子连杆前面。
+先读 @ref conventions "数据格式"。四元数顺序、参考系、向量排布这几项弄错了程序不会
+报错，只是结果不对。
 
-在 include 任何头文件之前，把 `RD_MAX_LINKS` 和 `RD_MAX_JOINTS` 改成你机器人的数量。
-这两个宏决定 rd_model_t 结构体本身有多大，默认的 16 和 12 是按小机械臂配的。Go2
-需要 31 个连杆、12 个关节。
+库自带的检查手段：
 
-## 一个控制周期长什么样
+| 命令 | 作用 |
+|---|---|
+| `cmake -B build && cmake --build build && ./build/rd_test` | 主机冒烟测试，不需要装任何东西 |
+| `python3 tools/validate.py --urdf-root /path/to/bard` | 对照 Pinocchio 的完整交叉验证，需要装 Pinocchio |
+| `python3 tools/amalgamate.py --verify` | 生成单头文件并验证它与多文件构建产出的机器码一致 |
 
-一共四个调用，前两个只在启动时做一次，后两个每周期做。
+## 常见错误
 
-```c
-#include "robot_dynamics.h"
-#include "model_my_robot.h"
-
-/* --- 启动时，各做一次 --- */
-rd_chain_t chain;
-rd_chain_build(&my_robot, &chain);          /* 把模型预处理成算法能走的形式 */
-
-static rd_real_t buf[RD_STATE_BUF_FLOATS(RD_MAX_LINKS)];
-rd_state_t state;
-rd_state_init(&state, chain.n_nodes, buf, sizeof(buf));   /* 划分工作区 */
-
-const rd_idx_t eef = rd_chain_find_frame(&chain, "foot_fl");  /* 按名字查索引 */
-
-/* --- 每个控制周期 --- */
-for (;;) {
-    read_encoders(q_joints, qd);
-    read_base_estimate(q_base);             /* 固定基座的机器人传 NULL */
-
-    rd_update_kinematics(&chain, &state, q_base, q_joints, qd);
-
-    rd_rnea(&chain, &state, qdd, NULL, tau);            /* 逆动力学，算力矩 */
-    rd_jacobian(&chain, &state, eef, RD_FRAME_WORLD, J);
-
-    write_torques(tau);
-}
-```
-
-rd_chain_build() 是库里唯一会向堆申请内存的函数，而且只在启动时申请一次。它之后所有
-计算都在 `buf` 里做，这块内存归你，多大也由你定：rd_state_buffer_size() 告诉你要多少
-字节，`RD_STATE_BUF_FLOATS(n)` 给的是静态数组声明用的元素个数。
-
-rd_update_kinematics() 走一遍运动学树，把每根连杆的位姿和速度算出来存好，后面的算法
-直接读。每个周期开头调一次，然后想跑几个算法就跑几个。为两个算法各调一次，等于把整个
-控制环里最贵的那一步白算了一遍。
-
-## 各个函数算什么
-
-```c
-rd_rnea(&chain, &state, qdd, NULL, tau);          /* tau = M qdd + h    */
-rd_crba(&chain, &state, M);                       /* 质量矩阵 M(q)      */
-rd_gravity(&chain, &state, NULL, g);              /* 只要重力项 g(q)    */
-rd_nonlinear_terms(&chain, &state, NULL, h);      /* 科氏力加重力 C qd + g */
-rd_forward_dynamics(&chain, &state, tau, NULL,
-                    RD_FD_CRBA, work, qdd);       /* 由力矩反求加速度   */
-rd_jacobian(&chain, &state, frame, RD_FRAME_WORLD, J);
-rd_forward_kinematics(&chain, &state, frame, T);  /* frame 在世界系的位姿 */
-```
-
-这几个调用里的 `NULL` 都是重力参数。传 `NULL` 表示用世界系下的 `{0, 0, -9.81}`；
-你的机器人如果在斜坡上或者别的星球上，传三个浮点数进去。
-
-@warning `rd_forward_dynamics()` 要你额外给一块临时数组，多大取决于选哪个方法。
-别猜，问 rd_forward_dynamics_work()：选 RD_FD_ABA 时它返回 0，选 RD_FD_CRBA 时返回
-`nv*nv + nv`（一个质量矩阵加一个向量的空间）。
-
-## 返回值
-
-所有函数都返回 rd_status_t，`RD_OK` 是 0，错误码都是负数。
-
-调试阶段这些码有用。rd_state_init() 返回 `RD_ERR_INVALID_SIZE` 说明缓冲区给小了；
-求解函数返回 `RD_ERR_SINGULAR` 说明质量矩阵或者约束集退化了，常见原因是同一个约束
-写了两遍。
-
-控制环跑起来之后，每周期传的参数形状都一样，返回值也就一直一样。多数固件在启动时
-查一遍，然后把检查从热路径上拿掉。
-
-## 接下来
-
-在相信第一组数字之前，先看一遍 @ref conventions "约定"。那页上列的每一条弄错了都
-不会报错，程序照常跑，只是算出来的机器人是错的。
+| 现象 | 原因 |
+|---|---|
+| rd_state_init() 返回 `RD_ERR_INVALID_SIZE` | 缓冲区小了。用 rd_state_buffer_size() 问需要多少字节 |
+| rd_chain_build() 返回 `RD_ERR_INVALID_SIZE` | 模型超过 `RD_MAX_LINKS` 或 `RD_MAX_JOINTS` |
+| rd_chain_find_frame() 返回 -1 | 连杆名拼错，或者被 URDF 转换时截断到 15 字符 |
+| 求解函数返回 `RD_ERR_SINGULAR` | 质量矩阵或约束集退化，常见原因是同一条约束写了两遍 |
+| 结果数量级正确但姿态离谱 | 四元数写成了 `[x y z w]`。本库要求 `[w x y z]` |
+| 结果全零 | 忘了调 rd_update_kinematics() |
+| 力矩偏小 | 用了减速箱但没设 armature，见 @ref contacts "接触与闭链" |

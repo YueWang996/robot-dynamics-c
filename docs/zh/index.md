@@ -1,87 +1,108 @@
 # RobotDynamics {#mainpage}
 
-*装得进单片机的刚体动力学。*
+面向嵌入式的刚体动力学库。C99，单头文件分发，除 `libm` 外无依赖。
 
-C99 写的，除了 `libm` 不依赖任何东西。给一台 18 自由度的四足机器人算一轮力矩，
-在五美元的板子上可以跑到 1 kHz。
+在 STM32G474（Cortex-M4F @ 170 MHz）上，18 自由度四足机器人算一轮力矩耗时
+71 µs，对应 14.1 kHz 控制频率。
 
-它要解决的问题是这样的：机器人身上那颗 MCU 每个控制周期都得算出"各个关节该出多大
-力矩"，而这件事的成熟方案（Pinocchio、RBDL）都是给工作站写的，搬不进 MCU。这个库
-把同一套 Featherstone 空间代数做到能在 Cortex-M4 上按时算完。
+## 功能
 
-你给它一个从 URDF 转出来的模型和一块内存，它算这些东西给你：
+### 算法
+
+| 功能 | 函数 |
+|---|---|
+| 正运动学 | rd_forward_kinematics()、rd_fk_frame() |
+| 几何雅可比 | rd_jacobian() |
+| 空间速度、空间加速度 | rd_spatial_velocity()、rd_spatial_acceleration() |
+| 逆动力学（RNEA） | rd_rnea()、rd_rnea_ext() |
+| 正动力学（ABA） | rd_aba()、rd_aba_ext() |
+| 正动力学（CRBA + Cholesky） | rd_forward_dynamics() |
+| 质量矩阵（CRBA） | rd_crba() |
+| 重力项 | rd_gravity() |
+| 科氏项、非线性项 | rd_coriolis()、rd_nonlinear_terms() |
+| 约束动力学（接触、闭链） | rd_constrained_dynamics()、rd_constrained_dynamics_ext() |
+| 约束雅可比与偏置项 | rd_constraint_jacobian()、rd_constraint_bias() |
+| Cholesky 分解与回代 | rd_cholesky_factor()、rd_cholesky_solve() |
+
+### 支持的模型
 
 | | |
 |---|---|
-| `M(q)` | 质量矩阵 |
-| `h(q,q̇)` | 非线性项，科氏力加重力 |
-| `J` | 任意一个 frame 的雅可比 |
-| `γ` | 约束的偏置项，也就是 `J̇q̇` |
-| | 以及 `M` 的 Cholesky 分解，供你自己解方程 |
+| 关节类型 | 转动、移动、固定 |
+| 基座 | 固定基座、浮动基座（6 自由度） |
+| 关节轴 | 必须与坐标轴平行，即 ±X / ±Y / ±Z |
+| 闭链 | 支持，以约束形式声明 |
+| 接触 | 支持，按等式约束求解 |
+| 减速比 | 支持折算转子惯量（armature） |
+| 模型来源 | URDF，用 `tools/urdf2c.py` 离线转成 C 结构体 |
 
-控制器和接触求解器不在里面。这个库只把动力学量算出来，拿它们做什么由你决定。
-
-## 从哪里开始
-
-| | |
-|---|---|
-| @subpage quickstart "快速上手" | 拿到头文件，写出第一个能跑的控制周期 |
-| @subpage conventions "约定" | 四元数顺序、参考系、向量排布。这些弄反了程序不报错，只是算出来的机器人是错的 |
-| @subpage api "API 一览" | 按"你想算什么"分组的全部函数 |
-| @subpage configuration "编译配置" | 编译开关，以及怎么把自带的 sin/cos 换成你芯片的硬件加速器 |
-| @subpage contacts "接触与闭链" | 脚踩地面、闭链机构、已知的外力，分别该用哪个函数 |
-| @subpage performance "性能" | 五块板子上的实测数字，以及跑得动它的最小型号 |
-
-API 参考由头文件直接生成，中英文站点上都是英文。上面这六页中英文各有一份，
-菜单栏右上角可以切换。
-
-## 里面有什么
+### 数值与资源
 
 | | |
 |---|---|
-| 算法 | 正运动学、几何雅可比、RNEA（逆动力学）、ABA 和 CRBA（两种正动力学）、单独的重力项和科氏项、空间速度与加速度 |
-| 关节类型 | 转动、移动、固定，外加一个浮动基座 |
-| 参考系 | 凡是要指定参考系的地方，世界系和体坐标系都支持 |
-| 已知外力 | 任意连杆上可以加一个空间力，比如测力计读数或者背的负载。力直接进 O(n) 递推，省掉每个接触点一次雅可比转置 |
-| 约束 | 踩在地上的脚，以及 URDF 这种树结构表达不了的闭链。库把它们组装成一个 KKT 方程组，一次解出关节加速度和接触力 |
-| 减速比 | 每个关节可以填折算转子惯量。带减速箱的电机，转子折算到关节上的等效惯量经常比它驱动的连杆还大，不填这项算出来的力矩会偏小 |
-| 线性代数 | 正动力学内部用的 Cholesky 分解和回代单独暴露出来，做操作空间控制时可以直接拿去用 |
-| 精度 | 对照 Pinocchio 验证过：float64 相差 5.5e-15，float32 相差 1.9e-06 |
-| 数值类型 | 默认 `float`，一个编译开关切成 `double` |
-| 内存 | 控制环里一次都不分配。所有算法的临时空间共用一块你自己给的缓冲区 |
-| 依赖 | 只有 `libm` |
-| 体积 | 整库编译成 Cortex-M4 代码是 40.2 KB，链接时丢掉没调用的部分之后大约 25 KB |
-| 分发方式 | 一个头文件 |
-| 模型来源 | URDF，用 `tools/urdf2c.py` 转成 C |
+| 精度 | 默认 float32，可切 float64 |
+| 验证 | 对照 Pinocchio，float32 误差 1.9e-06，float64 误差 5.5e-15 |
+| 内存分配 | 仅 rd_chain_build() 在启动时分配一次，控制环内零分配 |
+| 代码体积 | 整库 40.2 KB（Cortex-M4），按需链接后约 25 KB |
+| 最低硬件 | Cortex-M0+ 可运行，推荐带单精度 FPU 的 M4F 或 M33 |
+| 线程安全 | 一个 rd_state_t 同时只能有一个算法在跑；多个线程各用各的 state |
 
-一个控制周期里你通常要同时算好几个量：力矩、雅可比、质量矩阵。它们各自都得先把
-运动学树走一遍，算出每根连杆的位姿和速度。rd_update_kinematics() 把这一遍单独拎
-出来做一次，后面的算法直接读它算好的结果。库的速度主要来自这个安排。
+## 不包含的功能
 
-@note 还没到 1.0，有三个坑先讲清楚。移动关节（prismatic）代码写好了但没验证过，
-因为手上的参考机器人全是转动关节。关节限位、阻尼、摩擦这三项会被解析并存进模型，
-但目前没有任何算法读它们。rd_chain_build() 在启动时会调一次 `malloc`，所以完全
-无堆的构建现在做不到；控制环里确实一次都不分配。
+| | 替代方案 |
+|---|---|
+| 控制器 | 自行实现，本库提供 M、h、J 和分解结果 |
+| 摩擦锥、LCP 接触求解 | 本库解等式约束，摩擦锥检查与迭代由调用方做 |
+| 碰撞检测 | 自行实现或使用其他库 |
+| 关节限位、阻尼、摩擦的动力学 | 字段会解析并保存在模型里，目前没有算法读取 |
+| 运行时 URDF 解析 | 用 `tools/urdf2c.py` 离线转换 |
+
+## 安装
+
+**方式一，单头文件。** 从
+[Releases](https://github.com/YueWang996/robot-dynamics-c/releases/latest)
+下载 `robot_dynamics.h`，放进工程。在其中一个 `.c` 文件里：
+
+```c
+#define RD_IMPLEMENTATION
+#include "robot_dynamics.h"
+```
+
+其他文件直接 `#include "robot_dynamics.h"`。
+
+**方式二，源码树 + CMake。**
+
+```bash
+git clone https://github.com/YueWang996/robot-dynamics-c
+```
+
+```cmake
+add_subdirectory(RobotDynamics)
+target_link_libraries(my_firmware PRIVATE robot_dynamics)
+```
+
+## 文档
+
+| | |
+|---|---|
+| @subpage quickstart "快速开始" | 转换模型，写出第一个可运行的程序 |
+| @subpage conventions "数据格式" | 向量长度、四元数顺序、参考系、单位 |
+| @subpage api "功能与用法" | 每个功能的函数、参数、示例 |
+| @subpage contacts "接触与闭链" | 脚踩地面、闭链机构、已知外力 |
+| @subpage configuration "编译选项" | 全部编译宏与 CMake 选项 |
+| @subpage performance "性能数据" | 五块板子的实测结果 |
+
+[API 参考](files.html)由头文件生成，为英文。
 
 ## 许可
 
-Apache License 2.0。商用免费：可以装进产品卖、可以改、改完不开源也行。你要做的是
-随分发保留许可证和 NOTICE 文件，并写明你改了什么。
+Apache License 2.0，允许商用与闭源修改。分发时需保留许可证和 NOTICE 文件，
+并说明修改内容。含明确的专利授权条款。
 
-选它而不选 MIT 的实际理由是专利条款：Apache 2.0 里每个贡献者都明确授予了专利许可，
-对一个可能装进商用机器人的库来说，这一条值钱。
+## 相关项目
 
-## 来历
-
-这个库是为 [SPARC](https://github.com/YueWang996/sparc) 写的。SPARC 是一个用在四足
-机器人上的三自由度矢状面脊柱单元：前后两段机身之间有转动和轴向移动，1.26 kg，
-三个可编程柔顺的力矩驱动关节。加一节脊柱会同时干两件事——给动力学模型加自由度，
-以及把控制周期压得更短。这两个要求一起压过来，就是这个库被做成现在这样的原因。
-
-设计参考了 [bard](https://github.com/YueWang996/bard-pytorch-dynamics)，那是同一套
-东西在 PyTorch 上的版本。模型与数据的切分方式、算法集合、`q` 的排布顺序、空间代数
-的各项约定都跟它对齐，所以在工作站上对着 bard 训出来的策略，可以直接在机器人上对着
-这个库跑。
-
-正确性对照 [Pinocchio](https://github.com/stack-of-tasks/pinocchio) 测量，算法来自
-Featherstone 的书。
+- [bard](https://github.com/YueWang996/bard-pytorch-dynamics) — PyTorch 实现，
+  `q` 排布和空间代数约定与本库一致，向量可直接互传
+- [SPARC](https://github.com/YueWang996/sparc) — 本库的初始应用场景，
+  四足机器人的三自由度矢状面脊柱单元
+- [Pinocchio](https://github.com/stack-of-tasks/pinocchio) — 正确性验证的参考实现

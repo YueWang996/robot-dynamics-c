@@ -1,151 +1,215 @@
 # 接触与闭链 {#contacts}
 
-机器人碰到外界这件事，在这个库里有两种完全不同的处理方式。选错哪一种，是拿到"看着
-合理但其实是错的"数字最常见的原因。
+本库对"机器人与外界接触"提供两套接口，区别在于已知量是力还是运动。
 
-区别在于**你知道的是力，还是知道的是运动**：
-
-| 你的情况 | 用这个 |
+| 已知条件 | 使用 |
 |---|---|
-| 力你已经知道了。测力计读出来的、背着的负载、推进器的推力 | rd_rnea_ext()、rd_aba_ext() |
-| 力你不知道，你知道的是那个点不许动。踩在地上的脚就是这样 | rd_constrained_dynamics() |
-| 两样都有。比如背着东西站着 | rd_constrained_dynamics_ext() |
+| 力已知（测力计读数、负载重量、推进器推力） | rd_rnea_ext()、rd_aba_ext() |
+| 运动已知（脚踩在地上，接触点不允许加速） | rd_constrained_dynamics() |
+| 两者都有（背着负载站立） | rd_constrained_dynamics_ext() |
 
-## 情况一：力是已知的
+选错会得到看似合理但错误的结果，不会报错。
 
-rd_rnea_ext() 和 rd_aba_ext() 让你给**每根连杆**指定一个空间力（三个力分量加三个
-力矩分量），表达在那根连杆自己的坐标系里。
+## 已知外力
+
+### 数据格式
+
+`f_ext` 是长度 `6 * n_nodes` 的数组，每个连杆一个空间力，表达在**该连杆自身坐标系**：
+
+```
+f_ext[6*i + 0..2]   力，N
+f_ext[6*i + 3..5]   力矩，N·m
+```
+
+没有受力的连杆填零。整个数组传 `NULL` 表示无外力。
+
+### 示例
 
 ```c
-rd_real_t f_ext[6 * RD_MAX_LINKS] = {0};
-/* 世界系下作用在连杆 i 原点的力 w，先转到连杆坐标系： */
-rotate_world_to_body(&T_i[0], w, &f_ext[6*i]);
+static rd_real_t f_ext[6 * RD_MAX_LINKS];
+memset(f_ext, 0, sizeof(f_ext));
+
+/* 已知世界系下作用在连杆 i 原点的力 w[3]，转到连杆坐标系 */
+rd_real_t T[16];
+rd_forward_kinematics(&chain, &state, i, T);
+/* T 的旋转部分是列主序 3x3，转置即为世界系到体坐标系 */
+f_ext[6*i + 0] = T[0]*w[0] + T[1]*w[1] + T[2]*w[2];
+f_ext[6*i + 1] = T[4]*w[0] + T[5]*w[1] + T[6]*w[2];
+f_ext[6*i + 2] = T[8]*w[0] + T[9]*w[1] + T[10]*w[2];
+
 rd_rnea_ext(&chain, &state, qdd, NULL, f_ext, tau);
 ```
 
-力是直接折进 O(n) 递推里的，所以加一个接触点只多花几次加法。常见的另一种写法是
-`tau += Jᵀf`，那要为每个接触点算一次雅可比再做转置乘法，贵得多。
+### 说明
 
-脚通常是固定连杆，而 rd_chain_build() 会把固定连杆折进最近的可动祖先。你可能担心
-往脚上加力会失效——不会。这个数组按连杆编号索引，折叠时力会连同惯量一起被带到可动
-祖先上去。
+外力在 O(n) 递推内部施加，一个接触点只增加几次加法。常见的 `tau += Jᵀ·f` 写法需要
+为每个接触点计算一次雅可比并做转置乘法，开销大得多。
 
-没受力的连杆每根只花六次比较。`f_ext` 整个传 `NULL` 一分钱不花。
+脚通常是固定连杆，rd_chain_build() 会把固定连杆折进最近的可动祖先。往固定连杆上加力
+仍然有效：数组按连杆编号索引，折叠时外力会随惯量一起传递到可动祖先。
 
-## 情况二：脚踩在地上
+## 约束：接触与闭链
 
-踩住的脚是一个**约束**。它的力你事先不知道，你知道的是它不许加速；力是解出来的结果。
+### 适用场景
 
-闭链也是同一件事。URDF 只能描述树，说不了"这两根连杆是连在一起的"。做法跟 Pinocchio
-一样：模型仍然保留那棵树，然后把被剪开的两个 frame 用一条约束绑回去。同一个数据结构
-也用来把脚钉在地面上，只要把另一端写成"世界"。
+**接触。** 踩在地面上的脚。接触力未知，已知的是接触点不允许加速，力由求解得出。
+
+**闭链。** URDF 只能描述树结构，无法表达"这两根连杆连在一起"。做法与 Pinocchio
+一致：模型保留树结构，被剪开的两个 frame 用一条约束绑定。
+
+两者用同一个数据结构。
+
+### 约束类型
+
+```c
+typedef enum {
+    RD_CONSTRAINT_POINT = 0,   /* 3 行：两个 frame 的原点重合，可相对转动 */
+    RD_CONSTRAINT_FULL  = 1    /* 6 行：原点重合且不可相对转动，相当于焊接 */
+} rd_constraint_type_t;
+
+typedef struct {
+    rd_idx_t             frame_a;   /* 约束写在这个 frame 的原点处 */
+    rd_idx_t             frame_b;   /* 另一端。RD_ANCHOR_WORLD 表示接地 */
+    rd_constraint_type_t type;
+} rd_constraint_t;
+```
+
+@warning `frame_b` 是索引，接地用 `RD_ANCHOR_WORLD`，值为 `-1`。
+写成 `RD_FRAME_WORLD` 可以编译通过，但那是值为 `0` 的枚举，当索引用表示 0 号连杆，
+也就是基座，结果是把脚约束到了机身上。
+
+### 函数
+
+```c
+rd_int_t    rd_constrained_dynamics_work(const rd_chain_t* chain,
+                                         const rd_constraint_t* cons, rd_int_t n_cons);
+
+rd_status_t rd_constrained_dynamics(const rd_chain_t* chain, const rd_state_t* state,
+                                    const rd_real_t* tau, const rd_real_t* gravity,
+                                    const rd_constraint_t* cons, rd_int_t n_cons,
+                                    rd_real_t* work,
+                                    rd_real_t* qdd_out, rd_real_t* lambda_out);
+```
+
+| 参数 | 说明 |
+|---|---|
+| `cons` | 约束数组 |
+| `n_cons` | 约束条数 |
+| `work` | 临时数组，长度由 rd_constrained_dynamics_work() 给出 |
+| `qdd_out` | 输出关节加速度，长度 `nv` |
+| `lambda_out` | 输出接触力，长度为总行数，用 rd_constraint_rows() 计算 |
+
+`lambda_out` 中每条约束的分量写在 `frame_a` 原点处、坐标轴与世界系对齐的参考系里。
+
+### 示例
 
 ```c
 rd_constraint_t con[2] = {
-    { fl_foot, RD_ANCHOR_WORLD, RD_CONSTRAINT_POINT },   /* 左前脚踩住     */
-    { link_a,  link_b,          RD_CONSTRAINT_FULL  },   /* 一个五连杆闭合 */
+    { fl_foot, RD_ANCHOR_WORLD, RD_CONSTRAINT_POINT },   /* 左前脚踩地，3 行 */
+    { link_a,  link_b,          RD_CONSTRAINT_FULL  },   /* 五连杆闭合，6 行 */
 };
 
-rd_int_t nw = rd_constrained_dynamics_work(&chain, con, 2);
-static rd_real_t work[NW_MAX];
-rd_real_t lambda[6];       /* 3 行 + 3 行 = 两条约束的接触力 */
+rd_int_t rows = rd_constraint_rows(con, 2);              /* = 9 */
+rd_int_t nw   = rd_constrained_dynamics_work(&chain, con, 2);
 
-rd_constrained_dynamics(&chain, &state, tau, NULL, con, 2,
-                        work, qdd, lambda);
+static rd_real_t work[WORK_MAX];
+static rd_real_t lambda[9];
+
+rd_constrained_dynamics(&chain, &state, tau, NULL, con, 2, work, qdd, lambda);
 ```
 
-`RD_CONSTRAINT_POINT` 约束三个方向：两个 frame 的原点不许分开，但可以相对转动。
-一只踩住的脚、一个销轴铰链，都是这种。`RD_CONSTRAINT_FULL` 再加三个转动方向，
-相当于焊死。
+约束是传入的参数，不属于 chain。足式机器人抬脚时传一个更短的数组即可，
+不需要重建 chain，也不产生内存分配。
 
-约束是**传进去的参数**，不是 chain 的一部分。足式机器人每抬一次脚，接触集就变一次，
-如果约束长在 chain 里，那每次抬脚都得重建整个 chain，那是不能接受的。现在抬腿只是
-下个周期传一个短一点的数组，什么都不用重建，也不分配内存。
-
-@warning `frame_b` 是一个**索引**，表示"世界"的值是 RD_ANCHOR_WORLD，等于 `-1`。
-在那里写 RD_FRAME_WORLD 也能编译通过，因为它是个值为 `0` 的枚举，当索引用就是
-0 号连杆，也就是机身。于是脚被约束到了机身上，跟着机身一起动，而求解返回的数字看起来
-还挺正常。详见 @ref conventions "约定"。
-
-## 它解的是什么方程
-
-标准的 KKT 系统，质量矩阵只分解一次：
+### 求解的方程
 
 ```
 [ M   Jᵀ ] [  qdd  ]   [ tau - h ]
 [ J   0  ] [ -λ    ] = [ -gamma  ]
 ```
 
-`J` 是约束雅可比，`gamma` 是让约束在加速度层面保持满足所需的偏置项。`λ` 就是接触力。
+`M` 只分解一次，每条约束行做一次回代。
 
-rd_constraint_jacobian() 和 rd_constraint_bias() 也是公开的，如果你要自己组装 KKT，
-或者在上面写一个带摩擦锥的接触求解器，可以只拿这两块。
+### 单独取约束雅可比和偏置项
 
-约束的各行写在 `frame_a` 原点处、坐标轴与世界系对齐的那个系里，`lambda` 回到同一组
-轴上。点约束贡献 3 行，全约束贡献 6 行，rd_constraint_rows() 帮你把总数加出来。
+```c
+rd_int_t    rd_constraint_jacobian_work(const rd_chain_t* chain);   /* = 6*nv */
 
-## Go2 例子里能看到的四件事
+rd_status_t rd_constraint_jacobian(const rd_chain_t* chain, const rd_state_t* state,
+                                   const rd_constraint_t* cons, rd_int_t n_cons,
+                                   rd_real_t* work, rd_real_t* J_out);
 
-`examples/go2_contact/` 在一台四足上从头到尾走了一遍。`make && ./go2_contact` 就能跑，
-除了这个库和一个生成好的 Go2 模型之外什么都不需要。
+rd_status_t rd_constraint_bias(const rd_chain_t* chain, const rd_state_t* state,
+                               const rd_constraint_t* cons, rd_int_t n_cons,
+                               rd_real_t* gamma_out);
+```
 
-**约束管住的只有脚，机身该塌还是会塌。** 四只脚全部踩住，关节力矩给零，机身仍然以
-接近一个 g 的加速度往下掉。脚确实没动，但膝盖折了，地面只提供了 158 N 体重里的 10 N。
-这不是 bug：约束的含义就是"这个点不许动"，站不站得住是力矩的事。接触求解只告诉你
-地面回给了多少力。
+`J_out` 是 `rows × nv` 行主序，`gamma_out` 长度 `rows`。
 
-**每只脚出多大力，得你自己定。** 把体重平均分给四只脚，用 rd_rnea_ext() 问在这组力
-下保持静止需要多少关节力矩，返回值的前六行不是零。前面说过浮动基座没有电机，所以那
-六行里剩下的东西，就是"平均分"这个方案没能达到的平衡条件。
+需要自行组装 KKT 方程，或者在上层实现带摩擦锥的接触求解器时使用。
 
-把这个残差压到零，正规做法叫力分配，一般是一个小 QP。它是控制决策，刻意没放进这个库。
-不管它、直接把力矩发下去也能看：机身的竖直加速度保持在 0.06 m/s²，但俯仰有
-5.8 rad/s²，那就是残差变成了实际的运动。
+## 摩擦锥
 
-**支撑集变了，力矩也得跟着重算。** 拿四脚站立算出来的力矩，发给只有两只脚着地的姿态，
-有一半体重没人扛。按实际着地的两只脚重新分配之后，地面又扛住了全部 158 N。
+rd_constrained_dynamics() 解的是**等式**约束，不知道地面只能推不能拉，
+也不知道切向力有上限。为满足约束，它会给出把脚往下拉的法向力，
+以及任意大的切向力。
 
-**摩擦锥是这件事真正变成"接触动力学"的地方。** rd_constrained_dynamics() 解的是
-**等式**约束。它不知道地面只能推不能拉，也不知道切向力有上限。为了满足约束，它会
-心安理得地把脚往下拽，也会索取任意大的切向力。
+以下检查由调用方完成：
 
-例子里让脚把机器人往侧面推：切向需求随加速度线性上升，法向力却被体重钉死。超过 μ·g
-之后，那个切向力物理上就送不出去了，无论力矩给多大。
+```c
+/* 对每个点接触，lambda 的三个分量在世界对齐坐标系下 */
+rd_real_t fx = lambda[3*k+0], fy = lambda[3*k+1], fz = lambda[3*k+2];
 
-检查法向力为正、切向力落在摩擦锥内，是调用方的事。库不替你做，因为强制它是一个迭代
-过程——把不满足的脚释放掉再解一遍——而用哪种迭代策略属于控制决策。
+if (fz < 0)                              /* 法向力为负，脚在被往下拉 */
+    /* 该脚实际已离地，从约束集中去掉后重新求解 */;
 
-## 一个不需要参考实现的自检
+if (fx*fx + fy*fy > mu*mu*fz*fz)         /* 超出摩擦锥 */
+    /* 切向力送不出去，需要重新分配或降低期望加速度 */;
+```
 
-把正向求解出来的那组接触力，反过来喂给 rd_rnea_ext()，应该能复现出你一开始输入的
-那组力矩。Go2 例子里这个来回闭合到 1.5e-05。
+强制满足这两条需要迭代（去掉不满足的脚重新求解），迭代策略属于控制决策，
+本库不做。
 
-这个检查的好处是不需要 Pinocchio，也不需要任何参考实现，在目标板上就能做。符号搞反了、
-参考系转错了，都会在这里暴露出来。值得接进你自己的调试流程。
+## 自检方法
 
-## 要多花多少时间
+把求解得到的接触力反代回 rd_rnea_ext()，应复现出输入的力矩：
 
-STM32L413 @ 80 MHz，Go2，包含 `update_kinematics` 和求解在内：
+```c
+rd_constrained_dynamics(&chain, &state, tau, NULL, con, n, work, qdd, lambda);
 
-| | |
+/* 把 lambda 转成 f_ext 后 */
+rd_rnea_ext(&chain, &state, qdd, NULL, f_ext, tau_check);
+/* tau_check 应等于 tau */
+```
+
+`examples/go2_contact/` 中这个闭环误差为 1.5e-05。
+
+这个检查不需要参考实现，可以在目标板上直接跑，能发现符号错误和参考系错误。
+
+## 完整示例
+
+`examples/go2_contact/` 是一个四足机器人的完整例子：
+
+```bash
+cd examples/go2_contact && make && ./go2_contact
+```
+
+覆盖四脚站立、力分配、两脚支撑、摩擦锥扫描、闭环自检。其中几个值得注意的结果：
+
+- 四脚踩住但关节力矩为零时，机身仍以接近 1 g 下落。约束保证脚不动，
+  站立需要力矩，接触求解只给出地面反力（158 N 体重中的 10 N）。
+- 按体重平均分配足底力后，`tau[0..5]` 不为零，说明平均分配没有满足基座平衡。
+  求解这个残差属于力分配问题，一般是一个小规模 QP。
+- 支撑集变化时力矩必须重算。四脚的力矩用在两脚支撑上，会有一半体重无人承担。
+
+## 计算开销
+
+STM32L413 @ 80 MHz，Go2，含 rd_update_kinematics()：
+
+| | 耗时 |
 |---|---|
-| 不带接触（`rd_forward_dynamics`，CRBA 方法） | 435 µs |
+| 无接触，rd_forward_dynamics() 用 CRBA | 435 µs |
 | 两个点接触 | 1039 µs |
 
-大约 2.6 倍。多出来的部分是约束雅可比、偏置项，以及每个约束行一次 Cholesky 回代——
-两个点接触就是六行六次。质量矩阵两种情况下都只分解一次，那部分没多花。
-
-## 带减速箱的关节
-
-这不是接触，放在这一页是因为它改的是同一组方程。
-
-`armature` 是折算转子惯量，值是 `n²·I_rotor`（`n` 是减速比）。电机转子本身惯量很小，
-但平方级的减速比会把它放大，在舵机或者任何高减速比驱动上，折算过来的惯量经常比它
-驱动的那根连杆还大。不填这一项，算出来的力矩会明显偏小。
-
-URDF 里没有这个字段，所以转换出来的模型这一项是零，要用 rd_chain_set_armature() 填。
-填完之后，rd_crba() 会把它加到 `M` 的对角线上，rd_rnea() 加到 `tau` 上，rd_aba() 加到
-关节体惯量上，三个算法保持一致。
-
-没设过 armature 的模型会跳过这部分工作：走一遍对角线要花 rd_crba() 的 3–5%，所以
-chain 里记了一个标志位，表示有没有任何关节设过。
+约 2.6 倍。增量来自约束雅可比、偏置项，以及每个约束行一次 Cholesky 回代
+（两个点接触共 6 行）。质量矩阵两种情况下都只分解一次。
