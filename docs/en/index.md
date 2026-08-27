@@ -1,81 +1,112 @@
 # RobotDynamics {#mainpage}
 
-*Rigid-body dynamics that fits on a microcontroller.*
+Rigid-body dynamics for embedded targets. C99, distributed as a single header,
+no dependencies beyond `libm`.
 
-C99, `libm` and nothing else, and a 1 kHz torque loop for an 18-DOF quadruped
-on a $5 board.
+On an STM32G474 (Cortex-M4F @ 170 MHz), one torque computation for an 18-DOF
+quadruped takes 71 µs, which is a 14.1 kHz control rate.
 
-Give it a model derived from a URDF and one buffer, and it returns torques,
-Jacobians and mass matrices fast enough to close the loop on the robot itself.
-There is no controller here and no contact solver: you get M, h, J, J̇q̇ and a
-factorisation, and what you build on them is yours.
+## Features
 
-## Where to start
+### Algorithms
+
+| Feature | Functions |
+|---|---|
+| Forward kinematics | rd_forward_kinematics(), rd_fk_frame() |
+| Geometric Jacobian | rd_jacobian() |
+| Spatial velocity and acceleration | rd_spatial_velocity(), rd_spatial_acceleration() |
+| Inverse dynamics (RNEA) | rd_rnea(), rd_rnea_ext() |
+| Forward dynamics (ABA) | rd_aba(), rd_aba_ext() |
+| Forward dynamics (CRBA + Cholesky) | rd_forward_dynamics() |
+| Mass matrix (CRBA) | rd_crba() |
+| Gravity term | rd_gravity() |
+| Coriolis and nonlinear terms | rd_coriolis(), rd_nonlinear_terms() |
+| Constrained dynamics (contacts, closed loops) | rd_constrained_dynamics(), rd_constrained_dynamics_ext() |
+| Constraint Jacobian and bias | rd_constraint_jacobian(), rd_constraint_bias() |
+| Cholesky factor and solve | rd_cholesky_factor(), rd_cholesky_solve() |
+
+### Supported models
 
 | | |
 |---|---|
-| @subpage quickstart | Get the header, write the first control tick |
-| @subpage conventions | Reversed, these produce a wrong robot quietly |
-| @subpage api | Every function, grouped by what you are computing |
-| @subpage configuration | Build options, and bringing your own sin/cos |
-| @subpage contacts | Feet on the ground, closed chains, external forces |
-| @subpage performance | Measured on five boards, and the smallest part it runs on |
+| Joint types | Revolute, prismatic, fixed |
+| Base | Fixed base, floating base (6 DOF) |
+| Joint axes | Must be axis-aligned: ±X / ±Y / ±Z |
+| Closed loops | Supported, declared as constraints |
+| Contacts | Supported, solved as equality constraints |
+| Gearing | Reflected rotor inertia (armature) per joint |
+| Model input | URDF, converted offline by `tools/urdf2c.py` |
 
-The [API reference](files.html) is generated from the headers and is in English
-on both sites. Everything above is written in both.
-
-## What is in it
+### Numerics and resources
 
 | | |
 |---|---|
-| Algorithms | Forward kinematics, geometric Jacobian, RNEA, ABA, CRBA, gravity, Coriolis and nonlinear terms, spatial velocity and acceleration |
-| Joints | Revolute, prismatic, fixed, and a floating base |
-| Frames | World and body, wherever a reference frame applies |
-| Contacts | External spatial forces on any link, applied inside the O(n) recursion |
-| Constraints | Feet on the ground and loops the tree was cut at, solved as a KKT system |
-| Actuators | Reflected rotor inertia per joint, which any geared drive needs |
-| Linear algebra | The Cholesky the forward dynamics uses, exposed for task-space work |
-| Accuracy | Validated against Pinocchio at 5.5e-15 (float64) and 1.9e-06 (float32) |
-| Precision | `float` by default, `double` with one flag |
-| Allocation | None in the control loop. One caller-provided buffer holds every algorithm's scratch |
-| Dependencies | `libm`. That is the whole list |
-| Footprint | 40.2 KB of Cortex-M4 code for the whole library, about 25 KB once `--gc-sections` drops what you do not call |
-| Distribution | One header |
-| Model input | URDF, through `tools/urdf2c.py` |
+| Precision | float32 by default, float64 optional |
+| Validation | Against Pinocchio: 1.9e-06 in float32, 5.5e-15 in float64 |
+| Allocation | Only rd_chain_build(), once at startup. Zero allocation in the control loop |
+| Code size | 40.2 KB of Cortex-M4 code for the whole library, about 25 KB after the linker drops unused parts |
+| Minimum target | Runs on Cortex-M0+. A single-precision FPU (M4F or M33) is recommended |
+| Thread safety | One algorithm at a time per rd_state_t. Use one state per thread |
 
-A control tick usually wants several of these at once, and each of them starts
-by walking the kinematic tree. rd_update_kinematics() walks it once and
-everything afterwards reads that cache, which is where most of the speed comes
-from.
+## Not included
 
-@note Pre-1.0, with three gaps worth stating. Prismatic joints are implemented
-and unvalidated, because the reference robots are revolute-only. Joint limits,
-damping and friction are parsed and stored, and no algorithm reads them yet.
-rd_chain_build() allocates once at startup, so a genuinely heapless build is
-not available; the control loop is allocation-free either way.
+| | Alternative |
+|---|---|
+| Controllers | Write your own. The library supplies M, h, J and the factorisation |
+| Friction cone / LCP contact solvers | The library solves equality constraints. Cone checks and iteration are the caller's |
+| Collision detection | Use a separate library |
+| Joint limit, damping and friction dynamics | The fields are parsed and stored. No algorithm reads them yet |
+| Runtime URDF parsing | Convert offline with `tools/urdf2c.py` |
+
+## Install
+
+**Option 1, single header.** Download `robot_dynamics.h` from
+[Releases](https://github.com/YueWang996/robot-dynamics-c/releases/latest) and
+copy it into your project. In exactly one `.c` file:
+
+```c
+#define RD_IMPLEMENTATION
+#include "robot_dynamics.h"
+```
+
+Include it plainly everywhere else.
+
+**Option 2, source tree with CMake.**
+
+```bash
+git clone https://github.com/YueWang996/robot-dynamics-c
+```
+
+```cmake
+add_subdirectory(RobotDynamics)
+target_link_libraries(my_firmware PRIVATE robot_dynamics)
+```
+
+## Documentation
+
+| | |
+|---|---|
+| @subpage quickstart | Convert a model and write a working program |
+| @subpage conventions | Vector layouts, quaternion order, frames, units |
+| @subpage api | Every function: signature, parameters, example |
+| @subpage contacts | Feet on the ground, closed loops, known external forces |
+| @subpage configuration | All compile-time macros and CMake options |
+| @subpage performance | Measured results on five boards |
+
+The [API reference](files.html) is generated from the headers.
 
 ## Licence
 
-Apache License 2.0. Free for any use, commercial included: ship it in a
-product, modify it, keep your changes closed. The obligations are keeping the
-licence and NOTICE with redistributions and stating what you changed. Apache
-2.0 also carries an explicit patent grant from every contributor, which is the
-practical reason to prefer it for a library that may end up in a commercial
-robot.
+Apache License 2.0. Commercial use and closed-source modification are allowed.
+Keep the licence and NOTICE with redistributions and state what you changed.
+Includes an explicit patent grant.
 
-## Credit
+## Related projects
 
-Written for [SPARC](https://github.com/YueWang996/sparc), a 3-DoF sagittal
-spine unit for quadruped robots. A spine adds DOF to the dynamics model and
-tightens the control loop at the same time, and that pair of demands is the
-constraint this library was shaped around.
-
-The design draws on [bard](https://github.com/YueWang996/bard-pytorch-dynamics),
-the PyTorch rigid-body dynamics library this one is the embedded counterpart
-to. The model/data split, the algorithm set, the `q` ordering and the
-spatial-algebra conventions all come from there, so a policy trained against
-bard on a workstation runs against this library on the robot.
-
-Correctness is measured against
-[Pinocchio](https://github.com/stack-of-tasks/pinocchio), and the algorithms
-are Featherstone's.
+- [bard](https://github.com/YueWang996/bard-pytorch-dynamics) — PyTorch
+  implementation. Same `q` layout and spatial-algebra conventions, so vectors
+  pass between the two directly
+- [SPARC](https://github.com/YueWang996/sparc) — the original application, a
+  3-DOF sagittal spine unit for quadrupeds
+- [Pinocchio](https://github.com/stack-of-tasks/pinocchio) — reference
+  implementation used for validation
