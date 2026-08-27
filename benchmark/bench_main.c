@@ -389,6 +389,9 @@ static void report(void) {
     printf("\nBEGIN_CSV\n");
     printf("# board=%s\n", BENCH_BOARD);
     printf("# arch=%s\n", BENCH_ARCH);
+#ifdef BENCH_TARGET
+    printf("# target=%s\n", BENCH_TARGET);
+#endif
     printf("# clk_sys_hz=%lu\n", (unsigned long)bench_clk_hz());
     printf("# real_t=%s\n", RD_REAL_IS_FLOAT ? "float32" : "float64");
     printf("# compiler=" __VERSION__ "\n");

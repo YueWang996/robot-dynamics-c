@@ -16,6 +16,11 @@
 #   make run-bench PLL80=1    # the benchmark at 80 MHz  (wall-clock figures)
 #   make read                 # re-read the last results without re-running
 #
+#   # What the library costs on a core with no FPU, measured rather than
+#   # extrapolated: same board, same clock, same flash, same source, only the
+#   # compiler target differs. CPU is a plain assignment, so this overrides it.
+#   make run-bench PLL80=1 CPU="-mcpu=cortex-m3 -mthumb -mfloat-abi=soft"
+#
 # No Cube L4 package is needed: the register definitions are in stm32l413.h and
 # the vector table is in startup_glue.c. The one file borrowed from a Cube
 # install is core_cm4.h, which is generic ARM CMSIS-Core -- any package will do.

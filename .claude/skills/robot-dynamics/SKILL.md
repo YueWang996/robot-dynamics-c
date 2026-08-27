@@ -282,6 +282,34 @@ on cycles per call, so scale another M4F from these by clock.
 **A 29-DOF humanoid fits on an 80 MHz M4F with 64 KB.** G1's torque tick is
 157 µs on the G474 and 330 µs on the L413 -- 6.4 kHz and 3.0 kHz.
 
+**"Can I use a core without an FPU?"** It builds and runs -- down to ARMv6-M,
+Cortex-M0+ compiles -- and it is 6 to 19x slower. Measured on one L413 by
+compiling the suite for Cortex-M3 soft-float and running it on the same board
+at the same clock, so only the compiler target differed: `jacobian_world` 6-10x,
+`update_kinematics` 7-12x, `crba` 7-16x, `aba` 12-13x, **`rnea` 10-19x** -- the
+penalty tracks how arithmetic-dense the algorithm is. Flash grows about 16 KB.
+
+Scaled to an STM32F103 at 72 MHz, torque tick: 2-DOF arm 2.5 kHz, 9-DOF spine
+1.3 kHz, 7-DOF arm 650 Hz, 12-joint quadruped 380 Hz, 29-DOF humanoid 160 Hz.
+Read those as optimistic -- the F103 has a prefetch buffer and no instruction
+cache, and this library is fetch-bound. So: gravity compensation and slow
+trajectories yes, torque control on anything with legs no. Tell people the fix
+is a part with a single-precision FPU, not a faster scalar core -- an 80 MHz
+M4F beats a 72 MHz M3 by more than ten times, and for STM32 the F303 and G431
+are near price-and-pin equivalents of the F103.
+
+Footprint, `--gc-sections`, float32, static allocation,
+`update_kinematics + rnea + jacobian + crba + gravity`, 16 links / 12 joints:
+M4F 23.5 KB flash / 6.8 KB RAM; Cortex-M3 soft-float 39.6 KB / 6.8 KB;
+`RD_ENABLE_ABA=0` takes RAM to 5.2 KB. It fits an F103C8. `RD_ENABLE_ABA=0`
+saves little flash unless the caller actually calls `rd_aba` -- `--gc-sections`
+already drops it otherwise.
+
+`benchmark/stm32l4` runs this: `make run-bench PLL80=1
+CPU="-mcpu=cortex-m3 -mthumb -mfloat-abi=soft"`. The CSV's `# target=` line is
+taken from the compiler's predefines, so a capture like that cannot be
+mislabelled as the board's nominal core.
+
 A part with no FPU costs 10–20x; say so when someone is choosing one for a
 quadruped.
 

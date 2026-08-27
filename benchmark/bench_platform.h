@@ -22,6 +22,35 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/*
+ * What the image was compiled for, as against what the part can do.
+ *
+ * BENCH_ARCH below names the board's core. That is not always the target:
+ * building the suite for a lesser one on the same silicon is how questions
+ * like "what does this cost without an FPU" get an answer instead of an
+ * extrapolation -- see the CPU override in stm32l4/Makefile. Taken from the
+ * compiler's own predefines, so it cannot disagree with the code that was
+ * generated, and printed into the CSV so a capture can never be mislabelled.
+ */
+#if defined(__ARM_ARCH_8M_MAIN__)
+  #define BENCH_ISA_ "ARMv8-M Mainline"
+#elif defined(__ARM_ARCH_8M_BASE__)
+  #define BENCH_ISA_ "ARMv8-M Baseline"
+#elif defined(__ARM_ARCH_7EM__)
+  #define BENCH_ISA_ "ARMv7E-M"
+#elif defined(__ARM_ARCH_7M__)
+  #define BENCH_ISA_ "ARMv7-M"
+#elif defined(__ARM_ARCH_6M__)
+  #define BENCH_ISA_ "ARMv6-M"
+#endif
+#ifdef BENCH_ISA_
+  #if defined(__ARM_FP)
+    #define BENCH_TARGET BENCH_ISA_ ", hardware FPU"
+  #else
+    #define BENCH_TARGET BENCH_ISA_ ", soft-float"
+  #endif
+#endif
+
 #ifdef BENCH_PICO
   #include "pico/stdlib.h"
   #include "hardware/clocks.h"
