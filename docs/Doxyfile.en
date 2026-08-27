@@ -7,5 +7,7 @@ PROJECT_BRIEF          = "Rigid-body dynamics that fits on a microcontroller"
 INPUT                 += docs/en
 USE_MDFILE_AS_MAINPAGE = docs/en/index.md
 
+# English is the site root, so that the published URL is the documentation and
+# not a page asking which language you want. Chinese sits under zh/.
 OUTPUT_DIRECTORY       = docs/.site
-HTML_OUTPUT            = en
+HTML_OUTPUT            = .

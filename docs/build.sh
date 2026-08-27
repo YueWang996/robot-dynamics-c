@@ -73,6 +73,7 @@ cat > "$BUILD_DIR/head-snippet.html" <<'SNIPPET'
 <script type="text/javascript" src="$relpath^doxygen-awesome-fragment-copy-button.js"></script>
 <script type="text/javascript" src="$relpath^doxygen-awesome-paragraph-link.js"></script>
 <script type="text/javascript" src="$relpath^doxygen-awesome-interactive-toc.js"></script>
+<script type="text/javascript">window.RD_DOCS_RELPATH = "$relpath^";</script>
 <script type="text/javascript" src="$relpath^rd-language-switch.js"></script>
 <script type="text/javascript">
     DoxygenAwesomeDarkModeToggle.init()
@@ -98,9 +99,17 @@ grep -q 'rd-language-switch.js' "$BUILD_DIR/header.html" || {
 }
 
 # --- Sites ----------------------------------------------------------------
+# English writes into the site root and Chinese into zh/ below it, so English
+# has to be built first: clearing the root is how its build starts, and that
+# would take zh/ with it.
+clean_root() {
+    [ -d "$SITE_DIR" ] || return 0
+    find "$SITE_DIR" -mindepth 1 -maxdepth 1 ! -name zh -exec rm -rf {} +
+}
+
 build_one() {
     echo "doxygen: $1"
-    rm -rf "$SITE_DIR/$1"
+    if [ "$1" = en ]; then clean_root; else rm -rf "$SITE_DIR/zh"; fi
     doxygen "docs/Doxyfile.$1" 2> "$BUILD_DIR/warnings.$1"
     if [ -s "$BUILD_DIR/warnings.$1" ]; then
         cat "$BUILD_DIR/warnings.$1" >&2
@@ -118,12 +127,12 @@ else
     rm -rf "$SITE_DIR"; mkdir -p "$SITE_DIR"
     build_one en
     build_one zh
-    cp docs/theme/landing.html "$SITE_DIR/index.html"
-    # GitHub Pages runs Jekyll over what it is given, and Jekyll drops every
-    # directory whose name begins with an underscore. Doxygen makes none today;
-    # its search index and future output might, and the failure would be a 404
-    # on one page rather than a broken build.
-    : > "$SITE_DIR/.nojekyll"
 fi
+
+# GitHub Pages runs Jekyll over what it is given, and Jekyll drops every
+# directory whose name begins with an underscore. Doxygen makes none today; its
+# search index and future output might, and the failure would be a 404 on one
+# page rather than a broken build.
+: > "$SITE_DIR/.nojekyll"
 
 echo "built $SITE_DIR"
