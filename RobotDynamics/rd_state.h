@@ -61,6 +61,16 @@ extern "C" {
  * State
  * ============================================================================ */
 
+/** One control tick's shared kinematics, plus every algorithm's scratch.
+ *
+ * Points into a buffer you own. rd_state_init() carves it up, and nothing here
+ * allocates or frees. Call rd_update_kinematics() at the top of the tick, then
+ * run as many algorithms as you like against the same state.
+ *
+ * The scratch fields belong to whichever algorithm is running, so two of them
+ * cannot be in flight over one state at the same time -- which on a single
+ * threaded control loop costs nothing, and is what keeps the buffer at 70
+ * floats per link instead of one workspace per algorithm. */
 typedef struct {
     /* --- Cache: filled by rd_update_kinematics(), read by everything ------ */
 

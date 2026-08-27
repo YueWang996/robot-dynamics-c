@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file robot_dynamics.h
- * @brief Robot Dynamics Library - Main Header
+ * @brief The whole library, in one include.
  * 
  * Include this single header to use the entire library.
+ *
+ * Documentation, in Chinese and English:
+ *   https://yuewang996.github.io/robot-dynamics-c/
  * 
  * Features:
  * - Forward kinematics          (rd_fk_frame, rd_forward_kinematics)
@@ -17,6 +20,8 @@
  * - Spatial velocity            (rd_spatial_velocity)
  * - Spatial acceleration        (rd_spatial_acceleration)
  * - Gravity / Coriolis terms    (rd_gravity, rd_nonlinear_terms, rd_coriolis)
+ * - Contacts and closed chains  (rd_constrained_dynamics, and the constraint
+ *                                Jacobian and bias on their own)
  *
  * The library follows a model / chain / state split. A model is a static
  * description, a chain is its pre-processed form, and a state is the per-tick

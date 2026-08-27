@@ -40,6 +40,21 @@ typedef struct {
     rd_real_t s_sign;   /**< Its sign; zero for a node with no DOF */
 } rd_dyn_node_t;
 
+/** A model prepared for the algorithms to walk.
+ *
+ * rd_chain_build() turns an rd_model_t into one of these once at startup, and
+ * it is the only allocation the library performs. Everything a per-tick
+ * traversal would otherwise recompute is settled here: the topological order,
+ * the parent paths, the spatial inertias shifted to their link origins, the
+ * reduced tree that skips fixed links, and which joints are axis-aligned enough
+ * for the fast kernels.
+ *
+ * Read-only during a control tick, and shareable between ticks and between
+ * rd_state_t buffers. rd_chain_set_armature() is the one field meant to be
+ * written after the build. Release it with rd_chain_free().
+ *
+ * The fields are documented for people reading the implementation. Nothing in
+ * the public API requires touching them. */
 typedef struct {
     rd_int_t n_nodes;              /**< Number of links */
     rd_int_t n_joints;             /**< Number of actuated joints */
@@ -149,11 +164,22 @@ static RD_INLINE int rd_chain_node_is_dynamic(const rd_chain_t* chain,
  * ============================================================================ */
 
 /**
- * @brief Build chain from robot model
- * 
- * @param model Source robot model
- * @param chain Output chain (must be allocated)
- * @return RD_OK on success, error code otherwise
+ * @brief Prepare a model for the algorithms. Call once, at startup.
+ *
+ * Orders the tree, walks out the parent paths, shifts each link's inertia to
+ * its own origin, folds the fixed links into their nearest moving ancestor,
+ * and works out which joints qualify for the axis-aligned kernels. All of it
+ * per model, none of it per tick.
+ *
+ * This is the only function in the library that allocates. It takes several
+ * blocks from the heap and rd_chain_free() is what returns them, so a chain
+ * that outlives the program is fine and a chain built per tick is not.
+ *
+ * @param chain Somewhere to write the result. Its own storage is the caller's;
+ *              what is inside it belongs to this function.
+ * @return RD_ERR_ALLOC_FAILED if the heap could not supply it,
+ *         RD_ERR_INVALID_SIZE if the model exceeds RD_MAX_LINKS or
+ *         RD_MAX_JOINTS.
  */
 rd_status_t rd_chain_build(const rd_model_t* model, rd_chain_t* chain);
 
@@ -171,23 +197,32 @@ rd_status_t rd_chain_set_armature(rd_chain_t* chain, rd_int_t vidx,
                                   rd_real_t value);
 
 /**
- * @brief Free chain resources
- * 
- * @param chain Chain to free
+ * @brief Release what rd_chain_build() allocated.
+ *
+ * Leaves the rd_chain_t itself alone, so a static one may be rebuilt. Any
+ * rd_state_t used with this chain is stale afterwards and has to go back
+ * through rd_update_kinematics() before it is read again.
  */
 void rd_chain_free(rd_chain_t* chain);
 
 /**
- * @brief Find frame index by name
- * 
- * @param chain Chain to search
- * @param name Frame name
- * @return Frame index, or -1 if not found
+ * @brief Look a frame up by the name its link carries in the model.
+ *
+ * A linear scan, so resolve the frames a control loop cares about at startup
+ * and keep the indices. Every frame in the model is here, fixed links
+ * included: a foot is usually a fixed link, and asking for it by name is how
+ * you get an index the Jacobian and the constraints will accept.
+ *
+ * @return The frame index, or -1 if no link carries that name.
  */
 rd_idx_t rd_chain_find_frame(const rd_chain_t* chain, const char* name);
 
 /**
- * @brief Get velocity DOF
+ * @brief nv, the length of qd, qdd and tau, and the width of J and M.
+ *
+ * 6 + n_joints for a floating base, n_joints for a fixed one. nq differs from
+ * it, because the base pose needs a quaternion: that is why q_base and
+ * q_joints are separate arguments everywhere.
  */
 RD_INLINE rd_int_t rd_chain_get_nv(const rd_chain_t* chain) {
     if (!chain) return 0;

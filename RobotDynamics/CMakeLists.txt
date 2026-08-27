@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 # ============================================================================
 option(RD_SINGLE_PRECISION "Use single precision (float)" ON)
 option(RD_CMSIS_DSP "Enable ARM CMSIS-DSP" OFF)
-option(RD_FAST_TRIG "Polynomial sin/cos instead of libm" OFF)
+option(RD_FAST_TRIG "Polynomial sin/cos instead of libm" ON)
 option(RD_ENABLE_ABA "Compile the articulated-body algorithm" ON)
 option(RD_STATIC_ALLOC "Use static memory allocation" OFF)
 option(RD_OPTIMIZE_SIZE "Optimize for size (-Os)" OFF)
@@ -35,8 +35,13 @@ else()
     target_compile_definitions(robot_dynamics PUBLIC RD_USE_SINGLE_PRECISION=0)
 endif()
 
+# Both branches defined, because rd_config.h defaults RD_FAST_TRIG to 1: an
+# option that only ever defines the ON value cannot express OFF, and -DRD_FAST_TRIG=OFF
+# would quietly build with it on.
 if(RD_FAST_TRIG)
     target_compile_definitions(robot_dynamics PUBLIC RD_FAST_TRIG=1)
+else()
+    target_compile_definitions(robot_dynamics PUBLIC RD_FAST_TRIG=0)
 endif()
 
 # PUBLIC because it changes rd_state_t's layout: every translation unit that

@@ -1,10 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file rd_model.h
- * @brief Robot Model Definition
- * 
- * Defines the kinematic and dynamic parameters of articulated robots.
- * Supports floating base and open kinematic chains.
+ * @brief What a robot is, as data.
+ *
+ * A tree of links, each with an inertia and a joint to its parent, plus an
+ * optional floating base. No pointers and no allocation: an rd_model_t is a
+ * plain struct that tools/urdf2c.py emits as a const initialiser, so it lives
+ * in flash and costs no RAM.
+ *
+ * Closed chains are described the way Pinocchio describes them -- the tree
+ * here, and the loop as a constraint passed to the algorithms. See
+ * rd_constraint_t.
  */
 
 #ifndef RD_MODEL_H
@@ -20,17 +26,35 @@ extern "C" {
  * Joint Types
  * ============================================================================ */
 
+/** What a link's joint to its parent can do.
+ *
+ * A fixed joint still describes a frame, and the library keeps it: feet, sensor
+ * mounts and inertial frames are all fixed links, and rd_chain_build() folds
+ * them into their nearest moving ancestor so the dynamics never walks them.
+ * Go2 has 18 of them out of 31 links. */
 typedef enum {
     RD_JOINT_FIXED = 0,      /**< Fixed (no motion) */
     RD_JOINT_REVOLUTE,       /**< Rotational joint */
-    RD_JOINT_PRISMATIC,      /**< Linear joint */
-    RD_JOINT_FLOATING        /**< 6-DOF floating (for base) */
+    RD_JOINT_PRISMATIC,      /**< Linear joint. Implemented, and not yet checked
+                              *   against Pinocchio: the reference robots are
+                              *   revolute throughout. */
+    RD_JOINT_FLOATING        /**< The 6-DOF base pose. Belongs to link 0 and
+                              *   nowhere else; rd_model_t::use_floating_base is
+                              *   what actually switches it on. */
 } rd_joint_type_t;
 
 /* ============================================================================
  * Axis Direction
  * ============================================================================ */
 
+/** Which body axis a joint turns about or slides along.
+ *
+ * Axis-aligned only. A URDF axis of <1 0 0> is RD_AXIS_X and <0 0 -1> is
+ * RD_AXIS_NEG_Z; anything at a slant has to be absorbed into the joint's rpy
+ * offset, and tools/urdf2c.py refuses the model rather than rounding it. The
+ * restriction is what lets rd_update_kinematics() write one sine and one cosine
+ * into a transform instead of composing a general rotation, and it is worth a
+ * large fraction of the library's speed. */
 typedef enum {
     RD_AXIS_X = 0,
     RD_AXIS_Y,
@@ -44,15 +68,25 @@ typedef enum {
  * Reference Frame
  * ============================================================================ */
 
+/** Which frame a Jacobian, velocity or acceleration is expressed in.
+ *
+ * RD_FRAME_WORLD is Pinocchio's ReferenceFrame.WORLD: the spatial vector taken
+ * at the world origin, with the axes of the world. It is not
+ * LOCAL_WORLD_ALIGNED. To get the world-aligned quantity at a point p, take the
+ * WORLD one and subtract skew(p) times its angular half from the linear half.
+ *
+ * Passing one of these where a constraint wants a frame index is a trap worth
+ * knowing about: see RD_ANCHOR_WORLD. */
 typedef enum {
-    RD_FRAME_WORLD = 0,   /**< World/spatial frame */
-    RD_FRAME_LOCAL = 1    /**< Body-fixed/local frame */
+    RD_FRAME_WORLD = 0,   /**< At the world origin, in world axes. */
+    RD_FRAME_LOCAL = 1    /**< In the link's own body frame. */
 } rd_frame_t;
 
 /* ============================================================================
  * 3D Vector
  * ============================================================================ */
 
+/** A point or a direction in metres. */
 typedef struct {
     rd_real_t x;
     rd_real_t y;
@@ -63,6 +97,7 @@ typedef struct {
  * 3x3 Inertia Tensor (symmetric)
  * ============================================================================ */
 
+/** A symmetric 3x3 rotational inertia, six numbers, in kg m^2. */
 typedef struct {
     rd_real_t Ixx;
     rd_real_t Iyy;
@@ -76,6 +111,12 @@ typedef struct {
  * Spatial Inertia (compact storage)
  * ============================================================================ */
 
+/** A link's mass distribution, the way a URDF states it.
+ *
+ * Mass, centre of mass, and the inertia taken at that centre. rd_chain_build()
+ * turns this into the ten-number spatial inertia the algorithms use, shifted to
+ * the link's own origin, so nothing downstream repeats the parallel-axis
+ * arithmetic per tick. */
 typedef struct {
     rd_real_t mass;        /**< Mass (kg) */
     rd_vec3_t com;         /**< Center of mass in link frame (m) */
@@ -86,6 +127,10 @@ typedef struct {
  * Joint Definition
  * ============================================================================ */
 
+/** The joint between a link and its parent, plus what drives it.
+ *
+ * Limits, damping and friction are parsed and stored and no algorithm reads
+ * them yet. armature is read, by CRBA and by both forward-dynamics methods. */
 typedef struct {
     rd_joint_type_t type;  /**< Joint type */
     rd_axis_t axis;        /**< Rotation/translation axis */
@@ -116,8 +161,14 @@ typedef struct {
  * Link Definition
  * ============================================================================ */
 
+/** One link: where it sits, what it weighs, and how it attaches.
+ *
+ * Parents come before children in rd_model_t::links, which is what lets
+ * rd_chain_build() order the tree in one pass. tools/urdf2c.py guarantees it. */
 typedef struct {
-    char name[16];                 /**< Link name */
+    char name[16];                 /**< Link name, NUL-terminated, 15 characters
+                                    *   of it. rd_chain_find_frame() matches on
+                                    *   this. */
     
     /* Transform from parent joint to this link's joint */
     rd_vec3_t pos_parent;          /**< Position offset from parent (m) */
@@ -137,6 +188,12 @@ typedef struct {
  * Robot Model
  * ============================================================================ */
 
+/** A whole robot, as a plain struct with no pointers in it.
+ *
+ * Generate one with tools/urdf2c.py and it comes out as a const initialiser
+ * that lives in flash. It is a static description and is never written during
+ * a control tick: rd_chain_build() reads it once into an rd_chain_t, and the
+ * algorithms read that. */
 typedef struct {
     char name[32];                 /**< Robot name */
     
@@ -148,7 +205,12 @@ typedef struct {
     /* Link definitions (index 0 = base link) */
     rd_link_t links[RD_MAX_LINKS];
     
-    /* Gravity vector in world frame */
+    /** Gravity in world axes, conventionally {0, 0, -9.81}.
+     *
+     * rd_chain_build() does not carry this across, and an algorithm handed a
+     * NULL gravity uses {0, 0, -RD_GRAVITY} rather than reading it back. Pass
+     * it explicitly if the model states something else -- rd_vec3_t is three
+     * contiguous rd_real_t, so &model.gravity.x is the argument. */
     rd_vec3_t gravity;
     
 } rd_model_t;

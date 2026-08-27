@@ -229,11 +229,11 @@ rd_status_t rd_crba(const rd_chain_t* chain,
  *                cannot spare nv*nv floats. Wins as the model grows.
  *
  *   RD_FD_CRBA   Build M(q) and h(q,qd), then solve M qdd = tau - h by
- *                Cholesky. O(n^3) in the solve, but the mass matrix and the
- *                bias term are cheap recursions and the solve is small, so for
- *                the model sizes a microcontroller runs it is usually the
- *                faster of the two. It also hands you M and h, which an
- *                operational-space controller wants anyway.
+ *                Cholesky. O(n^3) in the solve, and it wins on a fixed-base
+ *                arm whose joint origins are turned, which is where ABA loses
+ *                its fast path. It also hands you M and h, which an
+ *                operational-space controller wants anyway, and it costs
+ *                nv*nv + nv floats of caller scratch.
  *
  * ABA is also what sizes rd_state_t -- it is the only algorithm with per-node
  * state of its own -- so a build that has settled on RD_FD_CRBA can set
@@ -291,17 +291,6 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
                                 rd_real_t* qdd_out);
 
 /* ============================================================================
- * Convenience wrappers
- * ============================================================================ */
-
-/**
- * @brief Gravity torques g(q) alone.
- *
- * Runs the RNEA recursion with the cached velocities suppressed, so this is
- * genuinely g(q) and not the full nonlinear term -- you do not need to rebuild
- * the state with qd = 0.
- */
-/* ============================================================================
  * Constraints: contacts, and loops the tree was cut open at
  *
  * A URDF is a tree and cannot say that a robot has a loop in it, so a loop is
@@ -328,6 +317,7 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
  */
 #define RD_ANCHOR_WORLD ((rd_idx_t)-1)
 
+/** How many directions a constraint pins, and therefore how many rows it adds. */
 typedef enum {
     RD_CONSTRAINT_POINT = 0,  /**< 3 rows: the origins may not move apart. A
                                *   foot on the ground, or a pin joint closing
@@ -336,11 +326,18 @@ typedef enum {
                                *   one another. A weld. */
 } rd_constraint_type_t;
 
+/** Two frames that must hold still relative to one another.
+ *
+ * A foot on the ground is one of these with RD_ANCHOR_WORLD as frame_b; a
+ * closed linkage is one between the two frames the tree was cut apart at. The
+ * rows are written in world-aligned axes at frame_a's origin, which is also the
+ * frame lambda comes back in. */
 typedef struct {
-    rd_idx_t             frame_a;
+    rd_idx_t             frame_a;  /**< The frame the constraint is written at.
+                                    *   For a contact, the foot. */
     rd_idx_t             frame_b;  /**< RD_ANCHOR_WORLD ties frame_a to the
                                     *   world. See the warning above it. */
-    rd_constraint_type_t type;
+    rd_constraint_type_t type;  /**< Three rows or six. */
 } rd_constraint_t;
 
 /** @brief Rows the constraint set contributes: 3 per point, 6 per weld. */
@@ -438,6 +435,17 @@ rd_status_t rd_constrained_dynamics_ext(const rd_chain_t* chain,
                                         rd_real_t* qdd_out,
                                         rd_real_t* lambda_out);
 
+/* ============================================================================
+ * Convenience wrappers
+ * ============================================================================ */
+
+/**
+ * @brief Gravity torques g(q) alone.
+ *
+ * Runs the RNEA recursion with the cached velocities suppressed, so this is
+ * genuinely g(q) and not the full nonlinear term -- you do not need to rebuild
+ * the state with qd = 0.
+ */
 rd_status_t rd_gravity(const rd_chain_t* chain,
                        const rd_state_t* state,
                        const rd_real_t* gravity,

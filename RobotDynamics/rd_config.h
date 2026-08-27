@@ -1,7 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /**
  * @file rd_config.h
- * @brief Robot Dynamics Library Configuration
+ * @brief Build options, scalar types, and status codes.
+ *
+ * Everything here can be set from the compiler command line, and the defaults
+ * are what a Cortex-M4F control loop wants. Two of them change struct layout --
+ * RD_USE_SINGLE_PRECISION and RD_ENABLE_ABA -- so every translation unit in a
+ * program has to be built with the same values.
  */
 
 #ifndef RD_CONFIG_H
@@ -34,12 +39,19 @@ extern "C" {
  * User Configuration (can be overridden via compiler flags)
  * ============================================================================ */
 
-/* Use single precision (float) instead of double (Default: 1) */
+/** float for rd_real_t rather than double (Default: 1).
+ *
+ * The FPU on a Cortex-M4F or an M33 is single precision and nothing else, so a
+ * double build does its arithmetic in software on exactly the parts this
+ * library was written for. Single precision agrees with Pinocchio to 1.9e-06
+ * across the test models, which is finer than the encoder and the inertia
+ * numbers feeding it. Double reaches 5.5e-15 and belongs in a host build that
+ * is checking something. */
 #ifndef RD_USE_SINGLE_PRECISION
     #define RD_USE_SINGLE_PRECISION  1
 #endif
 
-/* Polynomial sin/cos instead of libm's: 169 cycles per (sin, cos) pair against
+/** Polynomial sin/cos instead of libm's: 169 cycles per (sin, cos) pair against
  * libm's 521, measured inside rd_update_kinematics on an STM32G474 at 170 MHz,
  * at the same accuracy -- 6.6e-08 worst case against double precision over
  * [-pi, pi], where libm is 5.9e-08. Both pass the Pinocchio comparison at the
@@ -74,7 +86,7 @@ extern "C" {
  * CORDIC to read.
  */
 
-/* Compile the articulated-body algorithm (Default: 1).
+/** Compile the articulated-body algorithm (Default: 1).
  *
  * ABA is the only algorithm here that carries per-node state of its own -- an
  * articulated inertia, a velocity-product acceleration, and the U/D/u triple
@@ -91,25 +103,41 @@ extern "C" {
     #define RD_ENABLE_ABA  1
 #endif
 
-/* Use ARM CMSIS-DSP library for matrix operations (Default: 0) */
+/** Take sqrt from ARM's CMSIS-DSP rather than libm (Default: 0).
+ *
+ * CMSIS-DSP has to be on the include path, and the CMake option that turns
+ * this on wants RD_CMSIS_DSP_INCLUDE_DIR set alongside it. RD_MATH_BACKEND
+ * reaches the same place without a vendor dependency and is the seam to prefer
+ * for new work. */
 #ifndef RD_USE_CMSIS_DSP
     #define RD_USE_CMSIS_DSP  0
 #endif
 
-/* Use static memory allocation (no malloc/free) (Default: 0) */
+/** Make RD_MALLOC and RD_CALLOC return NULL, for a build with no heap (Default: 0).
+ *
+ * The control loop allocates nothing either way -- every algorithm works out of
+ * the buffer handed to rd_state_init(). rd_chain_build() is the single
+ * exception, once at startup, and with this on it fails instead. So the switch
+ * is honest about a heapless build and does not yet produce one. */
 #ifndef RD_USE_STATIC_ALLOC
     #define RD_USE_STATIC_ALLOC  0
 #endif
 
-/* Force CORDIC disabled */
-#define RD_USE_CORDIC  0
-
-/* Maximum number of links (for static allocation) */
+/** Links a model may hold, which is the length of rd_model_t::links (Default: 16).
+ *
+ * rd_model_t carries that array inside itself, so this is the size of every
+ * model object in the program whether the robot fills it or not. Set it to
+ * the link count of the URDF you converted: Go2 needs 31, the G1 humanoid 40. */
 #ifndef RD_MAX_LINKS
     #define RD_MAX_LINKS  16
 #endif
 
-/* Maximum number of joints (for static allocation) */
+/** Actuated joints a model may hold (Default: 12).
+ *
+ * Sizes the joint-space arrays a caller declares -- tau, qdd and the rest are
+ * conventionally 6 + RD_MAX_JOINTS so that one declaration covers a floating
+ * base as well. Fixed links do not count against it; Go2 has 31 links and 12
+ * joints. */
 #ifndef RD_MAX_JOINTS
     #define RD_MAX_JOINTS  12
 #endif
@@ -118,6 +146,10 @@ extern "C" {
  * Type Definitions
  * ============================================================================ */
 
+/** The scalar type every array in the library is made of.
+ *
+ * float or double, chosen by RD_USE_SINGLE_PRECISION. Write literals with
+ * RD_REAL() so they carry the right suffix in both builds. */
 #if RD_USE_CMSIS_DSP && RD_PLATFORM_ARM
     #include "arm_math.h"
     typedef float32_t rd_real_t;
@@ -132,9 +164,14 @@ extern "C" {
 
 /* Integer types */
 #include <stdint.h>
-typedef int32_t  rd_int_t;
-typedef uint32_t rd_uint_t;
-typedef int16_t  rd_idx_t;   /* Index type for arrays */
+typedef int32_t  rd_int_t;   /**< Counts and sizes: nv, n_nodes, row counts. */
+typedef uint32_t rd_uint_t;  /**< Unsigned counts, in the model description. */
+/** A link or frame index.
+ *
+ * Signed and 16 bits, so it is half the width of a pointer on the parts this
+ * runs on and negative values are free to mean something: -1 is "no parent" in
+ * rd_link_t::parent_idx and RD_ANCHOR_WORLD in a constraint. */
+typedef int16_t  rd_idx_t;
 
 /* ============================================================================
  * Math Constants
@@ -204,14 +241,20 @@ typedef int16_t  rd_idx_t;   /* Index type for arrays */
  * Error Codes
  * ============================================================================ */
 
+/** What every function in the library returns. RD_OK is zero, errors negative. */
 typedef enum {
-    RD_OK                =  0,
-    RD_ERR_NULL_PTR      = -1,
-    RD_ERR_INVALID_INDEX = -2,
-    RD_ERR_INVALID_FRAME = -3,
-    RD_ERR_ALLOC_FAILED  = -4,
-    RD_ERR_SINGULAR      = -5,
-    RD_ERR_INVALID_SIZE  = -6
+    RD_OK                =  0,  /**< Success. */
+    RD_ERR_NULL_PTR      = -1,  /**< A required pointer argument was NULL. */
+    RD_ERR_INVALID_INDEX = -2,  /**< A frame, joint or method index is out of range. */
+    RD_ERR_INVALID_FRAME = -3,  /**< ref_frame is not an rd_frame_t value. */
+    RD_ERR_ALLOC_FAILED  = -4,  /**< rd_chain_build() could not allocate. */
+    RD_ERR_SINGULAR      = -5,  /**< Cholesky met a non-positive pivot: the mass
+                                 *   matrix or the constraint set is degenerate.
+                                 *   Duplicated constraint rows are the usual
+                                 *   cause; so is an armature of zero on a joint
+                                 *   whose link has no inertia. */
+    RD_ERR_INVALID_SIZE  = -6   /**< A buffer is smaller than the sizing helper
+                                 *   asked for, or n_nodes is not positive. */
 } rd_status_t;
 
 /* ============================================================================
