@@ -1,0 +1,79 @@
+# Builds the bilingual documentation and publishes it to GitHub Pages.
+#
+# The site is two Doxygen runs over the same headers: docs/en and docs/zh hold
+# the guides, and the API reference is generated from RobotDynamics/*.h and is
+# in English on both. docs/build.sh does the whole thing and is the same script
+# you run locally, so what lands on Pages is what you saw.
+#
+# --strict makes Doxygen's warnings fatal. A doc comment separated from its
+# declaration by an edit above it, a @param naming an argument that was
+# renamed, a @ref to a page that moved: each of those warns and nothing else,
+# and a pull request that introduces one fails here rather than rotting the
+# site a commit at a time.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'RobotDynamics/**'
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'RobotDynamics/**'
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and let a running one finish: cancelling it mid-way
+# leaves Pages serving a half-uploaded site.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Pinned rather than taken from apt, which trails by several releases. The
+  # HTML header is generated from whichever binary runs, so a version that
+  # moves under the site changes every page on an unrelated commit.
+  DOXYGEN_VERSION: 1.18.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Graphviz
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
+
+      - name: Doxygen ${{ env.DOXYGEN_VERSION }}
+        run: |
+          url=https://github.com/doxygen/doxygen/releases/download
+          curl -fsSL "$url/Release_${DOXYGEN_VERSION//./_}/doxygen-$DOXYGEN_VERSION.linux.bin.tar.gz" \
+            | tar -xz
+          echo "$PWD/doxygen-$DOXYGEN_VERSION/bin" >> "$GITHUB_PATH"
+
+      - name: Build both sites
+        run: docs/build.sh --strict
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.site
+
+  deploy:
+    # Pull requests get the build and the strict check; only main publishes.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

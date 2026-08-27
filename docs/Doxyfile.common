@@ -1,0 +1,115 @@
+# Shared Doxygen configuration for RobotDynamics.
+#
+# Not a generated Doxyfile: only the settings that differ from Doxygen's own
+# defaults are here, so this file stays readable and reviewable. Doxyfile.en
+# and Doxyfile.zh @INCLUDE it and add what the language changes.
+#
+# Run from the repository root -- every path below is relative to it.
+#     docs/build.sh
+
+PROJECT_NAME           = RobotDynamics
+PROJECT_NUMBER         = $(RD_VERSION)
+PROJECT_LOGO           =
+
+# Headers only. The .c files hold the implementation, and its comments argue
+# with the reader about why the code is shaped the way it is -- worth reading
+# in the source, noise in an API reference.
+INPUT                  = RobotDynamics/robot_dynamics.h \
+                         RobotDynamics/rd_config.h \
+                         RobotDynamics/rd_model.h \
+                         RobotDynamics/rd_chain.h \
+                         RobotDynamics/rd_state.h \
+                         RobotDynamics/rd_algorithms.h \
+                         RobotDynamics/rd_math.h
+INPUT_ENCODING         = UTF-8
+RECURSIVE              = NO
+EXAMPLE_PATH           = examples
+EXAMPLE_RECURSIVE      = YES
+
+# Off, so that the guide pages under docs/ stay pages and do not also turn up
+# in the file list as documents in their own right. Undocumented struct fields
+# and enumerators still appear -- HIDE_UNDOC_MEMBERS is what would drop those --
+# so the only thing this hides is a file-scope function with no comment at all,
+# and the library has none.
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
+
+# rd_math.h names its internal code-generation macros with a trailing
+# underscore -- RD_JOINT_ROT_, RD_ABI_COL_ and the rest. They exist to unroll a
+# loop at the preprocessor and mean nothing outside the file that expands them.
+EXCLUDE_SYMBOLS        = RD_*_
+HIDE_UNDOC_MEMBERS     = NO
+OPTIMIZE_OUTPUT_FOR_C  = YES
+TYPEDEF_HIDES_STRUCT   = YES
+
+# The headers are ordered so that reading them top to bottom teaches the
+# library. Alphabetising the reference would throw that away.
+SORT_MEMBER_DOCS       = NO
+SORT_BRIEF_DOCS        = NO
+
+# rd_config.h decides what a default build contains, and the reference should
+# show that build. Following the includes rather than asserting the values here
+# is what keeps the option macros themselves documented: asserting RD_ENABLE_ABA
+# on the command line makes rd_config.h's own "#ifndef RD_ENABLE_ABA" false, and
+# the option disappears from the page that is supposed to describe it.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = NO
+SEARCH_INCLUDES        = YES
+INCLUDE_PATH           = RobotDynamics
+PREDEFINED             = RD_INLINE=inline \
+                         RD_NOINLINE= \
+                         RD_HOT= \
+                         RD_PURE= \
+                         RD_RESTRICT= \
+                         RD_ALIGN(n)= \
+                         RD_ALIGN4=
+
+# The comments carry most of this library's reasoning, so let the reference
+# link straight into them.
+SOURCE_BROWSER         = YES
+STRIP_CODE_COMMENTS    = NO
+REFERENCED_BY_RELATION = NO
+REFERENCES_RELATION    = NO
+VERBATIM_HEADERS       = YES
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_COLORSTYLE        = LIGHT
+HTML_DYNAMIC_SECTIONS  = NO
+SEARCHENGINE           = YES
+
+# doxygen-awesome-css, fetched by docs/build.sh at a pinned tag.
+HTML_HEADER            = docs/.build/header.html
+HTML_EXTRA_STYLESHEET  = docs/.theme/doxygen-awesome.css \
+                         docs/theme/robotdynamics.css
+HTML_EXTRA_FILES       = docs/.theme/doxygen-awesome-darkmode-toggle.js \
+                         docs/.theme/doxygen-awesome-fragment-copy-button.js \
+                         docs/.theme/doxygen-awesome-paragraph-link.js \
+                         docs/.theme/doxygen-awesome-interactive-toc.js \
+                         docs/theme/rd-language-switch.js
+
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = NO
+INCLUDE_GRAPH          = YES
+INCLUDED_BY_GRAPH      = NO
+CALL_GRAPH             = NO
+CALLER_GRAPH           = NO
+CLASS_GRAPH            = NO
+COLLABORATION_GRAPH    = NO
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+
+# The headers explain the parameters that need explaining and leave the obvious
+# ones alone. Doxygen would rather every one of them were listed, and saying so
+# on every build buries the warnings that mean something.
+WARN_IF_INCOMPLETE_DOC = NO
+WARN_NO_PARAMDOC       = NO
+WARN_AS_ERROR          = NO

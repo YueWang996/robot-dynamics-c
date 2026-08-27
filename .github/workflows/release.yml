@@ -1,7 +1,7 @@
 # Builds the single-header distribution and attaches it to the release.
 #
 # The source of truth stays the RobotDynamics/ tree; this produces the one file
-# people actually download. --verify compiles the result three ways and
+# people actually download. --verify builds the result seven ways and
 # compares its Cortex-M4 code against the multi-file build, so a release only
 # happens if the shipped header is the same library.
 name: release

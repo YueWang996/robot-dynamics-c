@@ -1,0 +1,85 @@
+/* Sits on top of doxygen-awesome.css. Both sites load it, so anything here
+ * has to read correctly in English and in Chinese. */
+
+html {
+    /* doxygen-awesome's accent, moved onto the blue the README's badges use. */
+    --primary-color:            #2b6cb0;
+    --primary-dark-color:       #1f4e82;
+    --primary-light-color:      #7ba7d4;
+    --primary-lighter-color:    #dbe7f4;
+    --primary-lightest-color:   #f0f5fb;
+
+    --page-font-size:           15.2px;
+    --content-maxwidth:         1050px;
+    --spacing-medium:           14px;
+}
+
+html.dark-mode {
+    --primary-color:            #7ba7d4;
+    --primary-dark-color:       #a8c6e4;
+    --primary-light-color:      #2f5177;
+    --primary-lighter-color:    #24384d;
+    --primary-lightest-color:   #1b2836;
+}
+
+/* A Chinese page falls back to whatever the system has if the stack does not
+ * name a face it owns, and the default fallback on Windows is a serif that
+ * sets far heavier than the Latin text beside it. Naming the usual four keeps
+ * the two scripts at the same weight in a mixed sentence. */
+body, table, div, p, dl, #nav-tree .label, .title,
+.sm-dox a, .sm-dox a:hover, .sm-dox a:visited, #projectname, .SelectItem {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+}
+
+/* Chinese runs without inter-word spaces, so a line box that is comfortable in
+ * English reads dense here. */
+:lang(zh) .textblock p,
+:lang(zh) .textblock li {
+    line-height: 1.72;
+}
+
+/* --- The language switch ------------------------------------------------ */
+
+#main-menu li.rd-language-item {
+    float: right;
+}
+
+#main-menu a.rd-language-switch {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+#titlearea a.rd-language-switch {
+    float: right;
+    margin: 0 var(--spacing-medium);
+    font-weight: 600;
+}
+
+/* --- Tables ------------------------------------------------------------- */
+
+/* The guides carry wide benchmark tables. Left-aligned first column, numbers
+ * that line up under each other, and a horizontal scroll rather than a page
+ * that overflows on a phone. */
+.textblock table.markdownTable {
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+}
+
+table.markdownTable td.markdownTableBodyRight,
+table.markdownTable td.markdownTableBodyCenter {
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Front matter ------------------------------------------------------- */
+
+/* The main page opens on a one-line statement of what the library is. */
+.textblock > p:first-of-type > em:only-child {
+    display: block;
+    font-size: 1.15em;
+    font-style: normal;
+    color: var(--page-secondary-foreground-color);
+    margin-bottom: var(--spacing-large);
+}

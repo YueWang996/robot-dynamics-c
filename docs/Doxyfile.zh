@@ -1,0 +1,14 @@
+# 中文站点。共用配置见 docs/Doxyfile.common。
+#
+# OUTPUT_LANGUAGE 只翻译 Doxygen 自己的界面文字（“函数”“参数”“详细描述”），
+# 不翻译头文件里的注释。API 参考因此是英文的，中文在 docs/zh 的指南里。
+@INCLUDE               = docs/Doxyfile.common
+
+OUTPUT_LANGUAGE        = Chinese
+PROJECT_BRIEF          = "装得进单片机的刚体动力学"
+
+INPUT                 += docs/zh
+USE_MDFILE_AS_MAINPAGE = docs/zh/index.md
+
+OUTPUT_DIRECTORY       = docs/.site
+HTML_OUTPUT            = zh

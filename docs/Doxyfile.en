@@ -1,0 +1,11 @@
+# English site. See docs/Doxyfile.common for everything shared.
+@INCLUDE               = docs/Doxyfile.common
+
+OUTPUT_LANGUAGE        = English
+PROJECT_BRIEF          = "Rigid-body dynamics that fits on a microcontroller"
+
+INPUT                 += docs/en
+USE_MDFILE_AS_MAINPAGE = docs/en/index.md
+
+OUTPUT_DIRECTORY       = docs/.site
+HTML_OUTPUT            = en

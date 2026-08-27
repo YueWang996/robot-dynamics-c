@@ -55,3 +55,8 @@ benchmark/stm32g4/STM32G474RETX_FLASH.ld
 
 # Pinocchio's code generation output -- regenerate with benchmark/codegen/gen.py
 benchmark/codegen/generated/
+
+# Documentation build (docs/build.sh)
+docs/.theme/
+docs/.build/
+docs/.site/
