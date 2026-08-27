@@ -295,6 +295,111 @@ rd_status_t rd_forward_dynamics(const rd_chain_t* chain,
  * genuinely g(q) and not the full nonlinear term -- you do not need to rebuild
  * the state with qd = 0.
  */
+/* ============================================================================
+ * Constraints: contacts, and loops the tree was cut open at
+ *
+ * A URDF is a tree and cannot say that a robot has a loop in it, so a loop is
+ * declared the way Pinocchio declares one: keep the spanning tree the model
+ * already is, and constrain the two frames the loop was cut between. The same
+ * object describes a foot on the ground, with the world as the second frame.
+ *
+ * Constraints are arguments rather than part of the chain, because a legged
+ * robot's contact set changes every time a foot leaves the ground and
+ * rebuilding the chain for that would be absurd. Hand a different array and
+ * the next tick solves a different problem.
+ *
+ * Everything here is expressed in world-aligned axes at frame_a's origin.
+ * ========================================================================= */
+
+/** Second frame of a constraint that ties the first one to the world. */
+#define RD_ANCHOR_WORLD ((rd_idx_t)-1)
+
+typedef enum {
+    RD_CONSTRAINT_POINT = 0,  /**< 3 rows: the origins may not move apart. A
+                               *   foot on the ground, or a pin joint closing
+                               *   a planar linkage. */
+    RD_CONSTRAINT_FULL  = 1   /**< 6 rows: nor may the frames turn relative to
+                               *   one another. A weld. */
+} rd_constraint_type_t;
+
+typedef struct {
+    rd_idx_t frame_a;
+    rd_idx_t frame_b;         /**< RD_ANCHOR_WORLD ties frame_a to the world. */
+    rd_int_t type;            /**< rd_constraint_type_t */
+} rd_constraint_t;
+
+/** @brief Rows the constraint set contributes: 3 per point, 6 per weld. */
+rd_int_t rd_constraint_rows(const rd_constraint_t* cons, rd_int_t n_cons);
+
+/** @brief Floats of scratch rd_constraint_jacobian() needs: 6*nv. */
+rd_int_t rd_constraint_jacobian_work(const rd_chain_t* chain);
+
+/**
+ * @brief The constraint Jacobian J, such that J qd is the relative motion the
+ *        constraints forbid.
+ *
+ * @param work  [rd_constraint_jacobian_work()].
+ * @param J_out [rows * nv] row-major, rows = rd_constraint_rows().
+ */
+rd_status_t rd_constraint_jacobian(const rd_chain_t* chain,
+                                   const rd_state_t* state,
+                                   const rd_constraint_t* cons, rd_int_t n_cons,
+                                   rd_real_t* work,
+                                   rd_real_t* J_out);
+
+/**
+ * @brief The constraint bias gamma = Jdot qd, so that J qdd + gamma = 0 is the
+ *        acceleration-level constraint.
+ *
+ * The linear rows are a *classical* point acceleration -- the spatial drift
+ * plus omega x v -- because that is what differentiating J qd gives.
+ *
+ * @param gamma_out [rows].
+ */
+rd_status_t rd_constraint_bias(const rd_chain_t* chain,
+                               const rd_state_t* state,
+                               const rd_constraint_t* cons, rd_int_t n_cons,
+                               rd_real_t* gamma_out);
+
+/** @brief Floats of scratch rd_constrained_dynamics() needs. */
+rd_int_t rd_constrained_dynamics_work(const rd_chain_t* chain,
+                                      const rd_constraint_t* cons,
+                                      rd_int_t n_cons);
+
+/**
+ * @brief Forward dynamics with the constraints holding.
+ *
+ * Solves the KKT system
+ *
+ *     [ M   J^T ] [  qdd   ]   [ tau - h ]
+ *     [ J    0  ] [ -lambda] = [ -gamma  ]
+ *
+ * by its Schur complement: factorise M once, solve it against every row of J
+ * to get M^-1 J^T, then factorise the small J M^-1 J^T. Both factorisations
+ * are the Cholesky above.
+ *
+ * @param tau        [nv] or NULL.
+ * @param cons       n_cons constraints, or NULL/0 for plain forward dynamics.
+ * @param work       [rd_constrained_dynamics_work()]. On return its first
+ *                   nv*nv floats hold M's Cholesky factor and the next nv the
+ *                   bias h -- both yours.
+ * @param qdd_out    [nv].
+ * @param lambda_out [rows] constraint forces, or NULL if you do not want them.
+ *                   Sign is such that tau + J^T lambda is what the joints see.
+ * @return RD_ERR_SINGULAR if the mass matrix is not positive definite, or if
+ *         the constraints are redundant -- four feet welded to the ground by
+ *         RD_CONSTRAINT_FULL are, and J M^-1 J^T is then singular. Prefer
+ *         RD_CONSTRAINT_POINT for feet, which is also the honest model of one.
+ */
+rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
+                                    const rd_state_t* state,
+                                    const rd_real_t* tau,
+                                    const rd_real_t* gravity,
+                                    const rd_constraint_t* cons, rd_int_t n_cons,
+                                    rd_real_t* work,
+                                    rd_real_t* qdd_out,
+                                    rd_real_t* lambda_out);
+
 rd_status_t rd_gravity(const rd_chain_t* chain,
                        const rd_state_t* state,
                        const rd_real_t* gravity,

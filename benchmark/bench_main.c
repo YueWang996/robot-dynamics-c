@@ -211,9 +211,35 @@ static rd_status_t case_aba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t e
 }
 #endif
 
-/* The other forward dynamics: build M(q) and h(q,qd), then factorise. Sized
- * for the largest model the suite carries. */
-static rd_real_t g_fd_work[BENCH_MAX_NV * BENCH_MAX_NV + BENCH_MAX_NV];
+/* The other forward dynamics: build M(q) and h(q,qd), then factorise. Shared
+ * with the constrained solve below, which wants rather more, so it is sized
+ * for that: the largest model the suite carries with BENCH_MAX_CON contacts.
+ * Both cases report unsupported rather than overrun if that is ever wrong. */
+#define BENCH_MAX_CON 2
+#define BENCH_CON_M   (3 * BENCH_MAX_CON)
+static rd_real_t g_fd_work[BENCH_MAX_NV * BENCH_MAX_NV + 2 * BENCH_MAX_NV
+                           + 2 * BENCH_CON_M * BENCH_MAX_NV
+                           + BENCH_CON_M * BENCH_CON_M + 3 * BENCH_CON_M
+                           + 6 * BENCH_MAX_NV];
+
+/* Forward dynamics with feet on the ground: the case a legged or wheel-legged
+ * robot actually solves. The frames are picked in bench_robot(), deepest and
+ * never two off one moving body, which is how the four feet get chosen out of
+ * Go2's leaves ahead of its rotor dummies. */
+static rd_constraint_t g_cons[BENCH_MAX_CON];
+static rd_int_t g_n_cons;
+static rd_real_t g_lambda[BENCH_CON_M];
+
+static rd_status_t case_fd_contact(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
+    (void)eef;
+    if (g_n_cons <= 0) return RD_ERR_INVALID_SIZE;
+    if (rd_constrained_dynamics_work(c, g_cons, g_n_cons)
+        > (rd_int_t)(sizeof(g_fd_work)/sizeof(g_fd_work[0]))) return RD_ERR_INVALID_SIZE;
+    rd_status_t st = rd_constrained_dynamics(c, s, g_tau_in, NULL, g_cons, g_n_cons,
+                                             g_fd_work, g_qdd_out, g_lambda);
+    g_checksum += g_qdd_out[0] + g_lambda[0];
+    return st;
+}
 
 static rd_status_t case_fd_crba(const rd_chain_t* c, const rd_state_t* s, rd_idx_t eef) {
     (void)eef;
@@ -281,6 +307,7 @@ static const bench_case_t g_cases[] = {
     { "aba",                case_aba,               1, "forward dynamics" },
 #endif
     { "fd_crba",            case_fd_crba,           1, "forward dynamics, M + Cholesky" },
+    { "fd_contact",         case_fd_contact,        1, "forward dynamics with contacts, KKT" },
     { "crba",               case_crba,              1, "cached, joint-space mass matrix" },
     { "gravity_comp",       case_gravity,           1, "cached, RNEA with qdd=0" },
     { "spatial_accel",      case_spatial_accel,     1, "cached, re-runs the forward pass" },
@@ -349,6 +376,28 @@ static void run_robot(const bench_robot_t* robot) {
         if (g_chain.parent_path_len[i] > g_chain.parent_path_len[eef]) {
             eef = (rd_idx_t)i;
         }
+    }
+
+    /* Pick the constraint frames: leaves, deepest first, never two off one
+     * moving body -- two such are rigidly attached and the pair is redundant. */
+    g_n_cons = 0;
+    for (;;) {
+        rd_int_t best = -1;
+        for (rd_int_t i = 0; i < n; ++i) {
+            if (g_chain.children_count[i] != 0) continue;
+            int taken = 0;
+            for (rd_int_t k = 0; k < g_n_cons; ++k) {
+                if (g_cons[k].frame_a == (rd_idx_t)i ||
+                    g_chain.dyn_parent[g_cons[k].frame_a] == g_chain.dyn_parent[i]) taken = 1;
+            }
+            if (taken) continue;
+            if (best < 0 || g_chain.parent_path_len[i] > g_chain.parent_path_len[best]) best = i;
+        }
+        if (best < 0 || g_n_cons >= BENCH_MAX_CON) break;
+        g_cons[g_n_cons].frame_a = (rd_idx_t)best;
+        g_cons[g_n_cons].frame_b = RD_ANCHOR_WORLD;
+        g_cons[g_n_cons].type    = RD_CONSTRAINT_POINT;
+        g_n_cons++;
     }
 
     /* Prime the cache exactly the way a control loop would. */

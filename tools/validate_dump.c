@@ -39,6 +39,15 @@ static rd_real_t qd[MAXNV], qdd[MAXNV], tau_in[MAXNV], armature[MAXNV];
 static rd_real_t f_ext[6 * MAXN], tau_ext[MAXNV], qdd_ext[MAXNV];
 static rd_real_t M[MAXNV * MAXNV], J[6 * MAXNV], tau[MAXNV], qdd_fd[MAXNV];
 
+/* Constrained dynamics. Two cases: feet pinned to the ground, and a loop
+   closed between two branches. Sized for the largest the suite carries. */
+#define MAXCON 4
+static rd_constraint_t cons[MAXCON];
+static rd_real_t con_work[MAXNV*MAXNV + 2*MAXNV
+                          + 4*(6*MAXCON)*MAXNV + (6*MAXCON)*(6*MAXCON)
+                          + 4*(6*MAXCON) + 6*MAXNV];
+static rd_real_t qdd_con[MAXNV], lambda_con[6 * MAXCON];
+
 static void rd(rd_real_t* dst, int n) {
     for (int i = 0; i < n; ++i) {
         double v;
@@ -145,6 +154,79 @@ int main(int argc, char** argv) {
     rd_real_t acc[6];
     rd_spatial_acceleration(&chain, &state, qdd, eef, RD_FRAME_WORLD, acc);
     emit("ACC", -1, acc, 6);
+
+    /* --- Constraints -----------------------------------------------------
+     * Leaves of the tree, which are the frames a real robot constrains: feet,
+     * grippers, the far end of a linkage that was cut to make the tree. */
+    /* Deepest first, and never two off the same moving body: a rotor dummy and
+     * the foot below it are rigidly attached, so pinning both is a redundant
+     * constraint and J M^-1 J^T is singular. Depth picks the four feet out of
+     * Go2's leaves ahead of its twelve rotor links. */
+    rd_idx_t leaf[MAXCON]; int n_leaf = 0;
+    for (;;) {
+        rd_int_t best = -1;
+        for (rd_int_t i = 0; i < n; ++i) {
+            if (chain.children_count[i] != 0) continue;
+            int taken = 0;
+            for (int k = 0; k < n_leaf; ++k) {
+                if (leaf[k] == (rd_idx_t)i ||
+                    chain.dyn_parent[leaf[k]] == chain.dyn_parent[i]) taken = 1;
+            }
+            if (taken) continue;
+            if (best < 0 || chain.parent_path_len[i] > chain.parent_path_len[best]) {
+                best = i;
+            }
+        }
+        if (best < 0 || n_leaf >= MAXCON) break;
+        leaf[n_leaf++] = (rd_idx_t)best;
+    }
+
+    /* Case A: every leaf pinned to the ground by a point contact. */
+    if (n_leaf > 0) {
+        for (int i = 0; i < n_leaf; ++i) {
+            cons[i].frame_a = leaf[i];
+            cons[i].frame_b = RD_ANCHOR_WORLD;
+            cons[i].type    = RD_CONSTRAINT_POINT;
+        }
+        rd_int_t need = rd_constrained_dynamics_work(&chain, cons, n_leaf);
+        if (need <= (rd_int_t)(sizeof(con_work)/sizeof(con_work[0])) &&
+            rd_constrained_dynamics(&chain, &state, tau_in, NULL, cons, n_leaf,
+                                    con_work, qdd_con, lambda_con) == RD_OK) {
+            printf("CONA %d", n_leaf);
+            for (int i = 0; i < n_leaf; ++i) printf(" %s", chain.frame_names[leaf[i]]);
+            printf("\n");
+            emit("CQDDA", -1, qdd_con, nv);
+            emit("CLAMA", -1, lambda_con, 3 * n_leaf);
+        }
+    }
+
+    /* Case B: a loop closed between the first two leaves -- a weld, which is
+     * what cutting a parallel linkage leaves behind. */
+    if (n_leaf >= 2) {
+        cons[0].frame_a = leaf[0];
+        cons[0].frame_b = leaf[1];
+        cons[0].type    = RD_CONSTRAINT_FULL;
+        rd_int_t need = rd_constrained_dynamics_work(&chain, cons, 1);
+        if (need <= (rd_int_t)(sizeof(con_work)/sizeof(con_work[0])) &&
+            rd_constrained_dynamics(&chain, &state, tau_in, NULL, cons, 1,
+                                    con_work, qdd_con, lambda_con) == RD_OK) {
+            printf("CONB %s %s\n", chain.frame_names[leaf[0]],
+                                    chain.frame_names[leaf[1]]);
+            emit("CQDDB", -1, qdd_con, nv);
+            emit("CLAMB", -1, lambda_con, 6);
+            /* J and gamma too: a 6D weld between two frames that are nowhere
+             * near each other is not a loop closure, and reference libraries
+             * are entitled to define it differently. The pieces are checkable
+             * on their own terms -- J against theirs, gamma against a finite
+             * difference -- and the solve against its own KKT residual. */
+            static rd_real_t Jc[6 * MAXNV], gam[6];
+            if (rd_constraint_jacobian(&chain, &state, cons, 1, con_work, Jc) == RD_OK &&
+                rd_constraint_bias(&chain, &state, cons, 1, gam) == RD_OK) {
+                for (int r = 0; r < 6; ++r) emit("CJB", r, &Jc[r * nv], nv);
+                emit("CGB", -1, gam, 6);
+            }
+        }
+    }
 
     rd_chain_free(&chain);
     return 0;

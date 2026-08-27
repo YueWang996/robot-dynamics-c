@@ -263,6 +263,35 @@ the library is compiled; setting it project-wide from the build system is how
 not to think about it. `make SINGLE=1 CORDIC=1` in `benchmark/stm32g4` is the
 end-to-end check.
 
+**Closed chains and contacts.** `rd_constrained_dynamics(chain, state, tau,
+gravity, cons, n_cons, work, qdd, lambda)` solves the KKT system by its Schur
+complement -- factorise M once, solve it against every row of J, factorise the
+small `J M^-1 J^T`. A `rd_constraint_t` is `{frame_a, frame_b, type}` with
+`RD_CONSTRAINT_POINT` (3 rows) or `RD_CONSTRAINT_FULL` (6), and `frame_b =
+RD_ANCHOR_WORLD` ties frame_a to the world. **Constraints are arguments, not
+part of the chain** -- a foot leaving the ground is a different array, not a
+rebuild. `rd_constraint_jacobian` and `rd_constraint_bias` are public for
+callers assembling their own system.
+
+A URDF cannot express a loop, so a loop is declared the way Pinocchio declares
+one: keep the spanning tree, constrain the two frames the loop was cut between.
+
+**Redundant constraints return `RD_ERR_SINGULAR`.** Four feet welded with
+`RD_CONSTRAINT_FULL`, or two frames rigidly attached to the same body (a foot
+and the rotor dummy above it), make `J M^-1 J^T` singular. Feet want
+`RD_CONSTRAINT_POINT`, which is also the honest model of one.
+
+Cost, STM32L413 at 80 MHz, two point contacts, against the same robot's plain
+`fd_crba`: spine 259 vs 107 µs, xarm7 348 vs 161, Go2 983 vs 379, G1 3165 vs
+1580 -- **about 2 to 2.6x**. Most of the extra is the m extra Cholesky
+back-substitutions and one `rd_spatial_acceleration` per constrained frame,
+each of which re-runs the outward pass over the whole tree.
+
+**Wheel-legged robots: half of it already worked.** A wheel is a continuous
+revolute joint and a serial leg is an ordinary chain, so those run today; what
+was missing was the ground contact, which is now a constraint. Only genuinely
+parallel legs -- a five-bar -- need the loop closure.
+
 Rules of thumb: `update_kinematics` scales with the number of *moving* links,
 `rd_fk_frame` with path depth only (much cheaper than a full update if you need
 one frame), `aba` at ~12 µs per moving link on this part, `crba` at roughly

@@ -28,6 +28,7 @@ and mass matrices fast enough to close the loop on the robot itself.
 | **Joints** | Revolute, prismatic, fixed, and a floating base |
 | **Frames** | World and body, wherever a reference frame applies |
 | **Contacts** | External spatial forces on any link, applied inside the O(n) recursion — `rd_rnea_ext`, `rd_aba_ext` |
+| **Constraints** | Feet on the ground and loops the tree was cut at, solved as a KKT system — `rd_constrained_dynamics`, plus the constraint Jacobian and bias on their own |
 | **Actuators** | Reflected rotor inertia per joint, which any geared drive needs — `rd_chain_set_armature` |
 | **Linear algebra** | The Cholesky the forward dynamics uses, exposed for task-space work — `rd_cholesky_factor` / `_solve` |
 | **Accuracy** | Validated against Pinocchio at **5.5e-15** (float64) and **1.9e-06** (float32) |
@@ -128,6 +129,23 @@ python3 tools/urdf2c.py my_robot.urdf -n my_robot -o model_my_robot.h --floating
 The converter enforces what the C model requires — axis-aligned joint axes,
 15-character link names, parents before children — and fails loudly on anything
 it cannot represent.
+
+**Closed chains and feet on the ground.** A URDF is a tree and cannot say a
+robot has a loop in it, so declare the loop the way Pinocchio does: keep the
+tree, and constrain the two frames it was cut between. The same object pins a
+foot to the ground, with the world as the second frame.
+
+```c
+rd_constraint_t con[2] = {
+    { fl_foot, RD_ANCHOR_WORLD, RD_CONSTRAINT_POINT },   /* a foot planted */
+    { link_a,  link_b,          RD_CONSTRAINT_FULL  },   /* a five-bar closed */
+};
+rd_constrained_dynamics(&chain, &state, tau, NULL, con, 2, work, qdd, lambda);
+```
+
+Constraints are arguments, not part of the chain, so a leg leaving the ground
+is a different array and not a rebuild. `rd_constraint_jacobian` and
+`rd_constraint_bias` are public too, for anyone assembling their own KKT.
 
 **Contacts and geared joints.** `rd_rnea_ext` and `rd_aba_ext` take one spatial
 force per *link*, in that link's own body frame, and fold it into the recursion

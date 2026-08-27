@@ -1015,3 +1015,229 @@ rd_status_t rd_aba_ext(const rd_chain_t* chain, const rd_state_t* state,
 }
 
 #endif /* RD_ENABLE_ABA */
+
+/* ============================================================================
+ * Constraints: contacts, and loops the tree was cut open at
+ * ============================================================================ */
+
+rd_int_t rd_constraint_rows(const rd_constraint_t* cons, rd_int_t n_cons) {
+    if (!cons) return 0;
+    rd_int_t m = 0;
+    for (rd_int_t i = 0; i < n_cons; ++i) {
+        m += (cons[i].type == RD_CONSTRAINT_FULL) ? 6 : 3;
+    }
+    return m;
+}
+
+rd_int_t rd_constraint_jacobian_work(const rd_chain_t* chain) {
+    return chain ? 6 * rd_chain_get_nv(chain) : 0;
+}
+
+/*
+ * A spatial motion vector in the world convention is expressed at the world
+ * origin; a constraint is about the point the frames meet at. Moving one there
+ * leaves the angular part alone and takes p x omega off the linear part.
+ */
+static RD_INLINE void algo_shift_to_point(const rd_real_t p[3],
+                                          const rd_real_t in[6],
+                                          rd_real_t out[6]) {
+    out[0] = in[0] - (p[1]*in[5] - p[2]*in[4]);
+    out[1] = in[1] - (p[2]*in[3] - p[0]*in[5]);
+    out[2] = in[2] - (p[0]*in[4] - p[1]*in[3]);
+    out[3] = in[3]; out[4] = in[4]; out[5] = in[5];
+}
+
+/* World position of a frame, which is where its constraint rows are taken. */
+static rd_status_t algo_frame_point(const rd_chain_t* chain,
+                                    const rd_state_t* state,
+                                    rd_idx_t frame, rd_real_t p[3]) {
+    rd_real_t T[16];
+    rd_status_t st = rd_forward_kinematics(chain, state, frame, T);
+    if (st != RD_OK) return st;
+    p[0] = T[12]; p[1] = T[13]; p[2] = T[14];
+    return RD_OK;
+}
+
+rd_status_t rd_constraint_jacobian(const rd_chain_t* chain,
+                                   const rd_state_t* state,
+                                   const rd_constraint_t* cons, rd_int_t n_cons,
+                                   rd_real_t* work,
+                                   rd_real_t* J_out) {
+    if (!chain || !state || !J_out) return RD_ERR_NULL_PTR;
+    if (n_cons > 0 && (!cons || !work)) return RD_ERR_NULL_PTR;
+
+    const rd_int_t nv = rd_chain_get_nv(chain);
+    const rd_int_t m  = rd_constraint_rows(cons, n_cons);
+    rd_zero(J_out, m * nv);
+
+    rd_int_t row = 0;
+    for (rd_int_t ci = 0; ci < n_cons; ++ci) {
+        const rd_int_t nr = (cons[ci].type == RD_CONSTRAINT_FULL) ? 6 : 3;
+        rd_real_t p[3];
+        rd_status_t st = algo_frame_point(chain, state, cons[ci].frame_a, p);
+        if (st != RD_OK) return st;
+
+        /* frame_a adds, frame_b subtracts, both through the same scratch --
+         * J_out already holds a's contribution by the time b is computed. */
+        for (int side = 0; side < 2; ++side) {
+            const rd_idx_t f = side ? cons[ci].frame_b : cons[ci].frame_a;
+            if (side && f == RD_ANCHOR_WORLD) break;
+            st = rd_jacobian(chain, state, f, RD_FRAME_WORLD, work);
+            if (st != RD_OK) return st;
+
+            for (rd_int_t k = 0; k < nv; ++k) {
+                rd_real_t col[6], at_p[6];
+                for (int r = 0; r < 6; ++r) col[r] = work[r*nv + k];
+                algo_shift_to_point(p, col, at_p);
+                for (rd_int_t r = 0; r < nr; ++r) {
+                    if (side) J_out[(row + r)*nv + k] -= at_p[r];
+                    else      J_out[(row + r)*nv + k] += at_p[r];
+                }
+            }
+        }
+        row += nr;
+    }
+    return RD_OK;
+}
+
+rd_status_t rd_constraint_bias(const rd_chain_t* chain,
+                               const rd_state_t* state,
+                               const rd_constraint_t* cons, rd_int_t n_cons,
+                               rd_real_t* gamma_out) {
+    if (!chain || !state || !gamma_out) return RD_ERR_NULL_PTR;
+    if (n_cons > 0 && !cons) return RD_ERR_NULL_PTR;
+
+    rd_zero(gamma_out, rd_constraint_rows(cons, n_cons));
+
+    rd_int_t row = 0;
+    for (rd_int_t ci = 0; ci < n_cons; ++ci) {
+        const rd_int_t nr = (cons[ci].type == RD_CONSTRAINT_FULL) ? 6 : 3;
+        rd_real_t p[3];
+        rd_status_t st = algo_frame_point(chain, state, cons[ci].frame_a, p);
+        if (st != RD_OK) return st;
+
+        /*
+         * The reference point rides on frame_a, so its velocity is frame_a's
+         * and *both* sides differentiate against that one. Using each body's
+         * own velocity for its own term is the obvious thing and it is wrong:
+         * the two agree only while the loop is exactly closed, which is why
+         * the error hides in every well-posed configuration and appears the
+         * moment the constraint is violated -- exactly when a solver needs the
+         * bias to be right.
+         */
+        rd_real_t pdot[3] = { RD_REAL(0.0), RD_REAL(0.0), RD_REAL(0.0) };
+
+        for (int side = 0; side < 2; ++side) {
+            const rd_idx_t f = side ? cons[ci].frame_b : cons[ci].frame_a;
+            if (side && f == RD_ANCHOR_WORLD) break;
+
+            rd_real_t v[6], a[6], v_p[6], a_p[6];
+            st = rd_spatial_velocity(chain, state, f, RD_FRAME_WORLD, v);
+            if (st != RD_OK) return st;
+            st = rd_spatial_acceleration(chain, state, NULL, f, RD_FRAME_WORLD, a);
+            if (st != RD_OK) return st;
+            algo_shift_to_point(p, v, v_p);
+            algo_shift_to_point(p, a, a_p);
+            if (!side) { pdot[0] = v_p[0]; pdot[1] = v_p[1]; pdot[2] = v_p[2]; }
+
+            /* Differentiating J qd gives the *classical* acceleration of the
+             * point: the shifted spatial drift plus omega x pdot. The angular
+             * rows have no such term. */
+            a_p[0] += v_p[4]*pdot[2] - v_p[5]*pdot[1];
+            a_p[1] += v_p[5]*pdot[0] - v_p[3]*pdot[2];
+            a_p[2] += v_p[3]*pdot[1] - v_p[4]*pdot[0];
+
+            for (rd_int_t r = 0; r < nr; ++r) {
+                if (side) gamma_out[row + r] -= a_p[r];
+                else      gamma_out[row + r] += a_p[r];
+            }
+        }
+        row += nr;
+    }
+    return RD_OK;
+}
+
+rd_int_t rd_constrained_dynamics_work(const rd_chain_t* chain,
+                                      const rd_constraint_t* cons,
+                                      rd_int_t n_cons) {
+    if (!chain) return 0;
+    const rd_int_t nv = rd_chain_get_nv(chain);
+    const rd_int_t m  = rd_constraint_rows(cons, n_cons);
+    /* M, h, J, X = M^-1 J^T, A = J X, dinv(M), dinv(A), rhs, lambda,
+     * Jacobian scratch. */
+    return nv*nv + nv + m*nv + m*nv + m*m + nv + m + m + m + 6*nv;
+}
+
+rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
+                                    const rd_state_t* state,
+                                    const rd_real_t* tau,
+                                    const rd_real_t* gravity,
+                                    const rd_constraint_t* cons, rd_int_t n_cons,
+                                    rd_real_t* work,
+                                    rd_real_t* qdd_out,
+                                    rd_real_t* lambda_out) {
+    if (!chain || !state || !qdd_out || !work) return RD_ERR_NULL_PTR;
+
+    const rd_int_t nv = rd_chain_get_nv(chain);
+    const rd_int_t m  = rd_constraint_rows(cons, n_cons);
+
+    rd_real_t* M     = work;                 size_t off = (size_t)nv*nv;
+    rd_real_t* h     = work + off;           off += (size_t)nv;
+    rd_real_t* J     = work + off;           off += (size_t)m*nv;
+    rd_real_t* X     = work + off;           off += (size_t)m*nv;
+    rd_real_t* A     = work + off;           off += (size_t)m*m;
+    rd_real_t* dinv  = work + off;           off += (size_t)nv;
+    rd_real_t* dinvA = work + off;           off += (size_t)m;
+    rd_real_t* rhs   = work + off;           off += (size_t)m;
+    rd_real_t* lam   = work + off;           off += (size_t)m;
+    rd_real_t* jw    = work + off;
+
+    rd_status_t st = rd_crba(chain, state, M);
+    if (st != RD_OK) return st;
+    st = rd_nonlinear_terms(chain, state, gravity, h);
+    if (st != RD_OK) return st;
+    if (m > 0) {
+        st = rd_constraint_jacobian(chain, state, cons, n_cons, jw, J);
+        if (st != RD_OK) return st;
+        st = rd_constraint_bias(chain, state, cons, n_cons, rhs);
+        if (st != RD_OK) return st;
+    }
+
+    /* h becomes the unconstrained right-hand side, then qdd_out the
+     * unconstrained acceleration. M is left holding its own factor. */
+    for (rd_int_t k = 0; k < nv; ++k) h[k] = (tau ? tau[k] : RD_REAL(0.0)) - h[k];
+    if (rd_cholesky_factor(M, nv, dinv) != RD_OK) return RD_ERR_SINGULAR;
+    rd_cholesky_solve(M, dinv, h, qdd_out, nv);
+    if (m == 0) return RD_OK;
+
+    /* X column j is M^-1 times row j of J, so A = J X is J M^-1 J^T. */
+    for (rd_int_t j = 0; j < m; ++j) {
+        rd_cholesky_solve(M, dinv, &J[j*nv], &X[j*nv], nv);
+    }
+    for (rd_int_t r = 0; r < m; ++r) {
+        for (rd_int_t c = 0; c <= r; ++c) {
+            rd_real_t s = RD_REAL(0.0);
+            for (rd_int_t k = 0; k < nv; ++k) s += J[r*nv + k] * X[c*nv + k];
+            A[r*m + c] = s;
+            A[c*m + r] = s;
+        }
+        /* rhs = -(J qdd_free + gamma) */
+        rd_real_t s = RD_REAL(0.0);
+        for (rd_int_t k = 0; k < nv; ++k) s += J[r*nv + k] * qdd_out[k];
+        rhs[r] = -(s + rhs[r]);
+    }
+
+    /* Redundant constraints make this singular; see the header. */
+    if (rd_cholesky_factor(A, m, dinvA) != RD_OK) return RD_ERR_SINGULAR;
+    rd_cholesky_solve(A, dinvA, rhs, lam, m);
+    if (lambda_out) {
+        for (rd_int_t r = 0; r < m; ++r) lambda_out[r] = lam[r];
+    }
+
+    for (rd_int_t k = 0; k < nv; ++k) {
+        rd_real_t s = RD_REAL(0.0);
+        for (rd_int_t c = 0; c < m; ++c) s += X[c*nv + k] * lam[c];
+        qdd_out[k] += s;
+    }
+    return RD_OK;
+}

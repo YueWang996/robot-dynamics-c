@@ -74,16 +74,21 @@ def run_dump(binary, robot, payload):
     p = subprocess.run([binary, robot], input=payload, capture_output=True, text=True)
     if p.returncode != 0:
         raise RuntimeError(f"validate_dump failed: {p.stderr}")
-    out = {"T": {}, "V": {}, "M": {}, "JW": {}, "JL": {}, "NAME": {}}
+    out = {"T": {}, "V": {}, "M": {}, "JW": {}, "JL": {}, "NAME": {}, "CJB": {}}
     for line in p.stdout.splitlines():
         f = line.split()
         tag = f[0]
-        if tag in ("T", "V", "M", "JW", "JL"):
+        if tag in ("T", "V", "M", "JW", "JL", "CJB"):
             out[tag][int(f[1])] = np.array([float(x) for x in f[2:]])
         elif tag == "NAME":
             out["NAME"][int(f[1])] = f[2]
-        elif tag in ("TAU", "ACC", "QDD", "G", "NLE", "TAUEXT", "QDDEXT"):
+        elif tag in ("TAU", "ACC", "QDD", "G", "NLE", "TAUEXT", "QDDEXT",
+                     "CQDDA", "CLAMA", "CQDDB", "CLAMB", "CGB"):
             out[tag] = np.array([float(x) for x in f[1:]])
+        elif tag == "CONA":
+            out["conA"] = f[2:]
+        elif tag == "CONB":
+            out["conB"] = f[1:]
         elif tag == "SHAPE":
             out["shape"] = tuple(int(x) for x in f[1:])
         elif tag == "EEF":
@@ -204,8 +209,66 @@ def pin_quantities(model, data, cfg, floating, link_names, eef_name, resolved):
     tau_ext = pin.rnea(model, data, q, v, a, fext).copy()
     qdd_ext = pin.aba(model, data, q, v, tau_in, fext).copy()
 
+    # Constrained dynamics, against Pinocchio's own solver. Ours names links;
+    # a constraint there is a joint plus the placement that reaches the link.
+    def anchors(names):
+        out = []
+        for nm in names:
+            fr = model.frames[model.getFrameId(resolved.get(nm, nm))]
+            out.append((fr.parentJoint, fr.placement))
+        return out
+
+    cqdd = {}
+    if cfg.get("conA"):
+        cms = pin.StdVec_RigidConstraintModel()
+        cds = pin.StdVec_RigidConstraintData()
+        for j, pl in anchors(cfg["conA"]):
+            cm = pin.RigidConstraintModel(pin.ContactType.CONTACT_3D, model, j, pl,
+                                          pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
+            cms.append(cm); cds.append(cm.createData())
+        dc = model.createData()
+        pin.initConstraintDynamics(model, dc, cms, cds)
+        cqdd["A"] = pin.constraintDynamics(model, dc, q, v, tau_in, cms, cds).copy()
+    # The 6D case gets its pieces checked rather than its answer compared. A
+    # weld between two frames that are nowhere near each other is not a loop
+    # closure, and a reference library is entitled to define that differently
+    # -- Pinocchio's takes the relative placement into account, ours is purely
+    # the relative twist. Where the two definitions do agree is on the
+    # Jacobian, and gamma is checkable against a finite difference, which is
+    # nobody's convention.
+    loop = {}
+    if cfg.get("conB"):
+        (j1, p1), (j2, p2) = anchors(cfg["conB"])
+        cm = pin.RigidConstraintModel(pin.ContactType.CONTACT_6D, model,
+                                      j1, p1, j2, p2,
+                                      pin.ReferenceFrame.LOCAL_WORLD_ALIGNED)
+        cms = pin.StdVec_RigidConstraintModel(); cms.append(cm)
+        cds = pin.StdVec_RigidConstraintData(); cds.append(cm.createData())
+        dc = model.createData()
+        pin.initConstraintDynamics(model, dc, cms, cds)
+        pin.constraintDynamics(model, dc, q, v, tau_in, cms, cds)
+        loop["J"] = np.array(pin.getConstraintJacobian(model, dc, cms[0], cds[0]))
+
+        def skew(w):
+            return np.array([[0, -w[2], w[1]], [w[2], 0, -w[0]], [-w[1], w[0], 0]])
+
+        def Jrel(qq):
+            dd = model.createData()
+            pin.forwardKinematics(model, dd, qq)
+            pin.computeJointJacobians(model, dd, qq)
+            pt = dd.oMi[j1].act(p1).translation
+            S = np.vstack([np.hstack([np.eye(3), -skew(pt)]),
+                           np.hstack([np.zeros((3, 3)), np.eye(3)])])
+            return S @ (pin.getJointJacobian(model, dd, j1, pin.ReferenceFrame.WORLD)
+                        - pin.getJointJacobian(model, dd, j2, pin.ReferenceFrame.WORLD))
+
+        step = 1e-6
+        loop["gamma"] = (Jrel(pin.integrate(model, q, v * step)) @ v
+                         - Jrel(q) @ v) / step
+        loop["M"], loop["h"] = M, nle
+
     return dict(T=T, V=V, tau=tau, M=M, JW=JW, JL=JL, acc=acc,
-                tau_ext=tau_ext, qdd_ext=qdd_ext,
+                tau_ext=tau_ext, qdd_ext=qdd_ext, cqdd=cqdd, loop=loop,
                 qdd=qdd_fd, g=g, nle=nle, nv=model.nv)
 
 
@@ -267,12 +330,18 @@ def main():
             continue
 
         worst = {k: 0.0 for k in ("T", "V", "tau", "qdd", "g", "nle",
-                                  "M", "JW", "JL", "acc", "tauext", "qddext")}
+                                  "M", "JW", "JL", "acc", "tauext", "qddext",
+                                  "contact", "loopJ", "loopbias", "loopKKT")}
+        seen_con = set()
         missing_frames = 0
 
         for s in range(args.samples):
             cfg = make_config(rng, nj, floating, n)
             d = run_dump(binary, robot, payload_for(cfg, floating))
+            # The C side chooses which frames to constrain and says so; the
+            # reference builds the same set rather than guessing.
+            cfg["conA"] = d.get("conA")
+            cfg["conB"] = d.get("conB")
             ref = pin_quantities(model, data, cfg, floating, link_names, eef_name,
                                  resolved)
 
@@ -300,14 +369,38 @@ def main():
                 worst["tauext"] = max(worst["tauext"], err(d["TAUEXT"], ref["tau_ext"]))
             if "QDDEXT" in d:
                 worst["qddext"] = max(worst["qddext"], err(d["QDDEXT"], ref["qdd_ext"]))
+            if "CQDDA" in d and "A" in ref["cqdd"]:
+                worst["contact"] = max(worst["contact"], err(d["CQDDA"], ref["cqdd"]["A"]))
+                seen_con.add("contact: " + " ".join(d["conA"]))
+            if "CGB" in d and ref["loop"]:
+                Jb = np.array([d["CJB"][r] for r in range(6)])
+                gb = d["CGB"]
+                worst["loopJ"] = max(worst["loopJ"], err(Jb, ref["loop"]["J"]))
+                worst["loopbias"] = max(worst["loopbias"],
+                                        err(gb, ref["loop"]["gamma"]))
+                # And the solve, by its own two KKT rows, against Pinocchio's
+                # mass matrix and bias.
+                qb, lb = d["CQDDB"], d["CLAMB"]
+                r1 = Jb @ qb + gb
+                r2 = ref["loop"]["M"] @ qb + ref["loop"]["h"] - cfg["tau"] - Jb.T @ lb
+                scale = max(1.0, np.abs(ref["loop"]["M"] @ qb).max())
+                worst["loopKKT"] = max(worst["loopKKT"],
+                                       max(np.abs(r1).max(), np.abs(r2).max()) / scale)
+                seen_con.add("loop: " + " = ".join(d["conB"]))
 
         print(f"{robot}  (C: {n} links / {nj} joints / nv {nv}"
               f"{', floating' if fb else ''}   "
               f"pinocchio: {model.njoints - 1} joints / nv {model.nv})")
+        for c in sorted(seen_con):
+            print(f"    {c}")
         for k in ("T", "V", "tau", "qdd", "g", "nle", "M", "JW", "JL", "acc",
-                  "tauext", "qddext"):
-            status = "ok  " if worst[k] <= tol else "FAIL"
-            if worst[k] > tol:
+                  "tauext", "qddext", "contact", "loopJ", "loopbias", "loopKKT"):
+            # The bias reference is a forward difference at h = 1e-6, so it
+            # carries about that much error of its own and cannot be held to
+            # the tolerance the closed-form comparisons are.
+            kt = 1e-4 if k == "loopbias" else tol
+            status = "ok  " if worst[k] <= kt else "FAIL"
+            if worst[k] > kt:
                 grand_fail += 1
             print(f"    [{status}] {k:4s} max rel err {worst[k]:.3e}")
         if missing_frames:

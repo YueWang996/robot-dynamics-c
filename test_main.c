@@ -271,6 +271,52 @@ int main(void) {
     }
     printf("\n");
 
+    /* ---- Constrained dynamics -------------------------------------------- */
+    printf("--- Constrained dynamics (end frame pinned) ---\n");
+    {
+        rd_constraint_t con = { eef, RD_ANCHOR_WORLD, RD_CONSTRAINT_POINT };
+        static rd_real_t cwork[4096];
+        rd_real_t cqdd[MAXNV], clam[6], Jc[6 * MAXNV], gam[6], jw[6 * MAXNV];
+        rd_int_t need = rd_constrained_dynamics_work(&chain, &con, 1);
+        check(need <= (rd_int_t)(sizeof(cwork)/sizeof(cwork[0])),
+              "constrained-dynamics workspace fits");
+
+        rd_status_t cs = rd_constrained_dynamics(&chain, &state, tau, NULL,
+                                                 &con, 1, cwork, cqdd, clam);
+        check(cs == RD_OK, "rd_constrained_dynamics() succeeded");
+
+        /* The two rows of the KKT system it claims to have solved. There is no
+         * reference implementation here, so check the answer against its own
+         * definition: the constraint holds, and the dynamics hold with the
+         * constraint force added to the torque. */
+        rd_constraint_jacobian(&chain, &state, &con, 1, jw, Jc);
+        rd_constraint_bias(&chain, &state, &con, 1, gam);
+
+        rd_real_t worst_c = RD_REAL(0.0);
+        for (int r = 0; r < 3; ++r) {
+            rd_real_t acc = gam[r];
+            for (rd_int_t k = 0; k < nv; ++k) acc += Jc[r*nv + k] * cqdd[k];
+            if (rd_fabs(acc) > worst_c) worst_c = rd_fabs(acc);
+        }
+        printf("max |J qdd + gamma| = %.3e\n", (double)worst_c);
+        check(worst_c < RD_REAL(1e-3), "the pinned frame does not accelerate");
+
+        /* M qdd + h == tau + J^T lambda, read through RNEA: the torque that
+         * produces cqdd must be tau plus what the constraint pushes with. */
+        rd_real_t tau_needed[MAXNV];
+        rd_rnea(&chain, &state, cqdd, NULL, tau_needed);
+        rd_real_t worst_d = RD_REAL(0.0);
+        for (rd_int_t k = 0; k < nv; ++k) {
+            rd_real_t jtl = RD_REAL(0.0);
+            for (int r = 0; r < 3; ++r) jtl += Jc[r*nv + k] * clam[r];
+            rd_real_t e = rd_fabs(tau_needed[k] - (tau[k] + jtl));
+            if (e > worst_d) worst_d = e;
+        }
+        printf("max |rnea(qdd) - (tau + J^T lambda)| = %.3e\n", (double)worst_d);
+        check(worst_d < RD_REAL(1e-3), "the constraint force closes the dynamics");
+    }
+    printf("\n");
+
     /* ---- Spatial quantities ---------------------------------------------- */
     printf("--- Spatial quantities (end frame, world) ---\n");
     rd_real_t a[6], v[6];
