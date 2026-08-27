@@ -291,6 +291,9 @@ def main():
 
     binary = build(args.double, args.cflag)
     tol = args.tol if args.tol is not None else (1e-10 if args.double else 3e-5)
+    # Machine epsilon of the precision the C side was built with. Only the
+    # loopKKT check uses it; see there.
+    eps = float(np.finfo(np.float64 if args.double else np.float32).eps)
     rng = np.random.default_rng(args.seed)
 
     print(f"C side: {'float64' if args.double else 'float32'}   "
@@ -384,8 +387,25 @@ def main():
                 r1 = Jb @ qb + gb
                 r2 = ref["loop"]["M"] @ qb + ref["loop"]["h"] - cfg["tau"] - Jb.T @ lb
                 scale = max(1.0, np.abs(ref["loop"]["M"] @ qb).max())
-                worst["loopKKT"] = max(worst["loopKKT"],
-                                       max(np.abs(r1).max(), np.abs(r2).max()) / scale)
+                rel = max(np.abs(r1).max(), np.abs(r2).max()) / scale
+
+                # Measured against what the conditioning allows rather than a
+                # constant. The residual of a solved saddle-point system cannot
+                # go below eps * cond(KKT), and cond here is not a property of
+                # the library: the constraint is built between two frames the
+                # sampler picked (FL_foot to FR_foot on go2), and at a random
+                # configuration those are far apart, so closing the loop wants
+                # enormous internal forces. Seen across 20 samples: cond(KKT)
+                # from 1.1e3 to 4.3e5, lambda up to 2.2e4 N on a 158 N robot,
+                # and rel tracking cond linearly at about 1e-10 per unit --
+                # which is a solve behaving exactly as float32 should. A flat
+                # 3e-5 fails the worst of those while the same solve in double
+                # passes at 1.1e-13, and that is the tolerance being wrong
+                # rather than the answer.
+                KKT = np.block([[ref["loop"]["M"], Jb.T],
+                                [Jb, np.zeros((Jb.shape[0], Jb.shape[0]))]])
+                floor = eps * np.linalg.cond(KKT)
+                worst["loopKKT"] = max(worst["loopKKT"], rel / max(floor, tol))
                 seen_con.add("loop: " + " = ".join(d["conB"]))
 
         print(f"{robot}  (C: {n} links / {nj} joints / nv {nv}"
@@ -398,7 +418,10 @@ def main():
             # The bias reference is a forward difference at h = 1e-6, so it
             # carries about that much error of its own and cannot be held to
             # the tolerance the closed-form comparisons are.
-            kt = 1e-4 if k == "loopbias" else tol
+            # loopKKT is already reported as a multiple of the floor its
+            # conditioning allows, so anything at or under 1 is as good as the
+            # precision permits.
+            kt = 1e-4 if k == "loopbias" else (1.0 if k == "loopKKT" else tol)
             status = "ok  " if worst[k] <= kt else "FAIL"
             if worst[k] > kt:
                 grand_fail += 1
