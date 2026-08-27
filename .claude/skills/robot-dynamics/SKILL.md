@@ -287,6 +287,17 @@ Cost, STM32L413 at 80 MHz, two point contacts, against the same robot's plain
 back-substitutions and one `rd_spatial_acceleration` per constrained frame,
 each of which re-runs the outward pass over the whole tree.
 
+`rd_constrained_dynamics_ext` takes an `f_ext` as well: the feet are
+constraints whose forces come back in lambda, the payload on the back is a
+force you already know. Point people at
+`examples/go2_contact/` -- it is the worked quadruped, and it makes four
+points that callers get wrong: a planted foot holds the *foot*, so a limp
+robot with four feet down still collapses; choosing the foot forces is the
+caller's job and the base rows of `rd_rnea_ext` tell you what an even split
+failed to balance; the stance set and the torques have to be recomputed
+together; and the friction cone is the caller's check, because enforcing it is
+an iteration and which iteration is a control decision.
+
 **Wheel-legged robots: half of it already worked.** A wheel is a continuous
 revolute joint and a serial leg is an ordinary chain, so those run today; what
 was missing was the ground contact, which is now a constraint. Only genuinely

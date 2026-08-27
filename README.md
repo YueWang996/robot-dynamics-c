@@ -144,8 +144,14 @@ rd_constrained_dynamics(&chain, &state, tau, NULL, con, 2, work, qdd, lambda);
 ```
 
 Constraints are arguments, not part of the chain, so a leg leaving the ground
-is a different array and not a rebuild. `rd_constraint_jacobian` and
-`rd_constraint_bias` are public too, for anyone assembling their own KKT.
+is a different array and not a rebuild. `rd_constrained_dynamics_ext` takes an
+`f_ext` as well, for a robot that is carrying something while it stands on
+something. `rd_constraint_jacobian` and `rd_constraint_bias` are public too,
+for anyone assembling their own KKT.
+
+[`examples/go2_contact/`](examples/go2_contact/) works it end to end on a
+quadruped: four feet, a trot, the friction cone, and why a planted foot does
+not hold the robot up on its own.
 
 **Contacts and geared joints.** `rd_rnea_ext` and `rd_aba_ext` take one spatial
 force per *link*, in that link's own body frame, and fold it into the recursion

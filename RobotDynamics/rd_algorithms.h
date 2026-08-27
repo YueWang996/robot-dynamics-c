@@ -419,6 +419,25 @@ rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
                                     rd_real_t* qdd_out,
                                     rd_real_t* lambda_out);
 
+/**
+ * @brief The same, with forces you already know acting as well.
+ *
+ * Both senses of contact at once, which is the common case the moment a robot
+ * carries anything: the feet are constraints whose forces come back in
+ * lambda, and the payload on the back is an f_ext you measured or specified.
+ *
+ * @param f_ext [6*n_nodes] or NULL. See the note above rd_rnea_ext().
+ */
+rd_status_t rd_constrained_dynamics_ext(const rd_chain_t* chain,
+                                        const rd_state_t* state,
+                                        const rd_real_t* tau,
+                                        const rd_real_t* gravity,
+                                        const rd_real_t* f_ext,
+                                        const rd_constraint_t* cons, rd_int_t n_cons,
+                                        rd_real_t* work,
+                                        rd_real_t* qdd_out,
+                                        rd_real_t* lambda_out);
+
 rd_status_t rd_gravity(const rd_chain_t* chain,
                        const rd_state_t* state,
                        const rd_real_t* gravity,

@@ -1168,14 +1168,15 @@ rd_int_t rd_constrained_dynamics_work(const rd_chain_t* chain,
     return nv*nv + nv + m*nv + m*nv + m*m + nv + m + m + m + 6*nv;
 }
 
-rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
-                                    const rd_state_t* state,
-                                    const rd_real_t* tau,
-                                    const rd_real_t* gravity,
-                                    const rd_constraint_t* cons, rd_int_t n_cons,
-                                    rd_real_t* work,
-                                    rd_real_t* qdd_out,
-                                    rd_real_t* lambda_out) {
+rd_status_t rd_constrained_dynamics_ext(const rd_chain_t* chain,
+                                        const rd_state_t* state,
+                                        const rd_real_t* tau,
+                                        const rd_real_t* gravity,
+                                        const rd_real_t* f_ext,
+                                        const rd_constraint_t* cons, rd_int_t n_cons,
+                                        rd_real_t* work,
+                                        rd_real_t* qdd_out,
+                                        rd_real_t* lambda_out) {
     if (!chain || !state || !qdd_out || !work) return RD_ERR_NULL_PTR;
 
     const rd_int_t nv = rd_chain_get_nv(chain);
@@ -1194,7 +1195,11 @@ rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
 
     rd_status_t st = rd_crba(chain, state, M);
     if (st != RD_OK) return st;
-    st = rd_nonlinear_terms(chain, state, gravity, h);
+    /* h is the bias the torque has to beat, and a force you already know
+     * belongs in it: rd_rnea_ext() at qdd = 0 is exactly
+     * C qd + g - sum J^T f_ext. */
+    st = f_ext ? rd_rnea_ext(chain, state, NULL, gravity, f_ext, h)
+               : rd_nonlinear_terms(chain, state, gravity, h);
     if (st != RD_OK) return st;
     if (m > 0) {
         st = rd_constraint_jacobian(chain, state, cons, n_cons, jw, J);
@@ -1240,4 +1245,16 @@ rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
         qdd_out[k] += s;
     }
     return RD_OK;
+}
+
+rd_status_t rd_constrained_dynamics(const rd_chain_t* chain,
+                                    const rd_state_t* state,
+                                    const rd_real_t* tau,
+                                    const rd_real_t* gravity,
+                                    const rd_constraint_t* cons, rd_int_t n_cons,
+                                    rd_real_t* work,
+                                    rd_real_t* qdd_out,
+                                    rd_real_t* lambda_out) {
+    return rd_constrained_dynamics_ext(chain, state, tau, gravity, NULL,
+                                       cons, n_cons, work, qdd_out, lambda_out);
 }
