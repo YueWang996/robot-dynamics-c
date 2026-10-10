@@ -105,9 +105,19 @@ static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
 static RD_INLINE void rd_sincos(rd_real_t x, rd_real_t* s, rd_real_t* c) {
     if (rd_fabs(x) > 4096.0f) { *s = rd_sin(x); *c = rd_cos(x); return; }
 
-    const float MAGIC = 12582912.0f;                /* 2^23 + 2^22 */
-    float fn = (x * 0.636619772f + MAGIC) - MAGIC;  /* n = round(x * 2/pi) */
-    int   n  = (int)fn;
+    /* n = round(x * 2/pi). Not the (t + 1.5*2^23) - 1.5*2^23 trick: that relies
+     * on IEEE rounding of the intermediate sum, and -ffast-math -- which this
+     * library's own CMake build uses -- licenses the compiler to fold it to t.
+     * GCC and clang both do, and every angle then lands on its quadrant
+     * boundary: sin 0 and cos 1 for anything under pi/2. A float-to-int
+     * conversion has no algebraic identity to fold, and still needs no libm
+     * call on an FPv4-SP core, which has no VRINT. Half-away-from-zero only
+     * differs from round-to-even at an exact tie, where r is +-pi/4 either way
+     * and the polynomials below are accurate there. |x| <= 4096 keeps |t|
+     * well inside int range. */
+    const float t  = x * 0.636619772f;
+    const int   n  = (int)(t + (t >= 0.0f ? 0.5f : -0.5f));
+    const float fn = (float)n;
     float r  = x - fn * 1.5707962513e+00f;          /* pi/2, high part */
     r        =   r - fn * 7.5497894159e-08f;        /* pi/2, low part  */
 

@@ -127,8 +127,10 @@ static inline void rd_cordic_sincos(float x, float* s, float* c) {
      * as large as x/pi -- at x = 200 that is an ulp of 3.8e-06, and the answer
      * came out 1.4e-05 wrong. Subtracting k*pi in two pieces keeps the bits.
      * The half-turn the CORDIC wants is then a residual, always small. */
-    const float MAGIC = 12582912.0f;                 /* 2^23 + 2^22 */
-    const float k = (x * 0.318309886f + MAGIC) - MAGIC;   /* round(x/pi) */
+    /* round(x/pi) by conversion, not by adding and subtracting 1.5*2^23:
+     * -ffast-math folds that pair away (see rd_sincos in rd_math.h). */
+    const float t = x * 0.318309886f;
+    const float k = (float)(int32_t)(t + (t >= 0.0f ? 0.5f : -0.5f));
     float r = x - k * 3.1415925026e+00f;             /* pi, high part */
     r       = r - k * 1.5099580253e-07f;             /* pi, low part  */
 

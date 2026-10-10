@@ -51,6 +51,17 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
 
+      # The CMake build below compiles the library with -O3 -ffast-math, the
+      # flags it ships with. Fast-math is a licence to rewrite floating-point
+      # code, and rd_sincos once relied on IEEE rounding it was licensed to
+      # remove. Run the whole smoke test under it, so a construct that only
+      # breaks there fails here and not on somebody's robot.
+      - name: Smoke test, -O3 -ffast-math
+        run: |
+          ${{ matrix.cc }} -O3 -ffast-math -std=c99 -Wall -Wextra -pedantic -Werror \
+            -I RobotDynamics test_main.c RobotDynamics/rd_*.c -lm -o rd_test_fm
+          ./rd_test_fm > /dev/null
+
       - name: CMake build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=${{ matrix.cc }}

@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "robot_dynamics.h"
 #include "spine_model.h"
 
@@ -117,6 +118,42 @@ int main(void) {
     }
 
     const rd_idx_t eef = (rd_idx_t)(n - 1);
+
+    /* ---- Trigonometry and FK against libm ---------------------------------
+     * Everything below the line is self-consistency, which a wrong sin/cos
+     * passes: a rotation snapped to a quadrant is still orthonormal, cached
+     * and standalone FK still agree, and ABA still inverts RNEA. These two are
+     * absolute, so a miscompiled rd_sincos -- the rounding in it is folded away
+     * under -ffast-math if written the IEEE-dependent way -- cannot slip by. */
+    printf("--- Trigonometry and FK against libm ---\n");
+    {
+        double worst = 0.0;
+        for (int i = -4000; i <= 4000; ++i) {
+            rd_real_t x = (rd_real_t)i * RD_REAL(0.0025);   /* [-10, 10] rad */
+            rd_real_t sn, cs;
+            rd_sincos(x, &sn, &cs);
+            double es = fabs((double)sn - sin((double)x));
+            double ec = fabs((double)cs - cos((double)x));
+            if (es > worst) worst = es;
+            if (ec > worst) worst = ec;
+        }
+        printf("max |rd_sincos - libm| over [-10, 10] = %.3e\n", worst);
+        check(worst < 1e-6, "rd_sincos matches libm");
+
+        /* front_spine sits one revolute joint (about +y) below hind_spine: its
+         * origin is p01 + R_y(q0) p12 with the base at the identity. */
+        const rd_real_t q1[RD_MAX_JOINTS] = {RD_REAL(1.2), RD_REAL(0.0), RD_REAL(0.0)};
+        const rd_idx_t fs = rd_chain_find_frame(&chain, "front_spine");
+        rd_real_t Tf[16];
+        rd_fk_frame(&chain, NULL, q1, fs, Tf);
+        const double q0 = 1.2, x12 = 0.1175, y12 = 0.036;
+        const double ex = 0.00454 + x12 * cos(q0), ey = -0.017638872 + y12, ez = -x12 * sin(q0);
+        double e = fabs(Tf[12] - ex) + fabs(Tf[13] - ey) + fabs(Tf[14] - ez);
+        printf("front_spine at q0 = 1.2: [%.6f %.6f %.6f], expected [%.6f %.6f %.6f]\n",
+               (double)Tf[12], (double)Tf[13], (double)Tf[14], ex, ey, ez);
+        check(fs >= 0 && e < 1e-5, "FK of one revolute joint matches a hand computation");
+    }
+    printf("\n");
 
     /* ---- Forward kinematics --------------------------------------------- */
     printf("--- Forward kinematics ---\n");

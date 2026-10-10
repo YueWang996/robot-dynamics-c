@@ -43,10 +43,11 @@ static volatile float g_sink;
  * minimax polynomials. Joint angles are bounded, so none of libm's general
  * Payne-Hanek machinery for huge arguments is needed. */
 static inline void poly_sincos(float x, float *sn, float *cs) {
-    /* Round-to-nearest without a libm call: FPv4-SP has no VRINT. */
-    const float MAGIC = 12582912.0f;               /* 2^23 + 2^22 */
-    float fn = (x * 0.636619772f + MAGIC) - MAGIC; /* n = round(x * 2/pi) */
-    int   n  = (int)fn;
+    /* Round-to-nearest without a libm call: FPv4-SP has no VRINT. Same
+     * conversion-based rounding as rd_sincos, which survives -ffast-math. */
+    const float t  = x * 0.636619772f;
+    const int   n  = (int)(t + (t >= 0.0f ? 0.5f : -0.5f));
+    const float fn = (float)n;
     float r  = x - fn * 1.5707962513e+00f;         /* pi/2, high part */
     r        =   r - fn * 7.5497894159e-08f;       /* pi/2, low part  */
 
